@@ -1,31 +1,18 @@
 # CLive_Maro
 
-Windows에서 C/C++ 코드를 작성하고 빌드 결과와 진단 설명을 확인하는 간단한 Live IDE입니다.
-
-## 요구 도구
-
-- Windows 10/11 x64
-- Visual Studio 2026의 **C++를 사용한 데스크톱 개발** 워크로드
-- MSVC v145 및 Windows 10/11 SDK
-
-## 빌드
-
-1. **x64 Native Tools Command Prompt for VS 2026**을 엽니다.
-2. 저장소 폴더에서 다음 명령을 실행합니다.
-
-```bat
-msbuild Maro_CLive_Maro.sln /m /t:Build /p:Configuration=Release /p:Platform=x64
-```
-
-3. `Maro_Build\x64\Release\Maro_CLive_Maro.exe`를 실행합니다.
+Visual Studio에서 열어 둔 C/C++ 문서를 자동으로 분석하고 실행 결과와 진단 설명을 보여 줍니다.
 
 ## 사용법
 
-오른쪽 편집기에 C 또는 C++ 코드를 입력합니다. 코드는 자동으로 분석·실행되며, `Run` 또는 `F5`로 즉시 다시 실행할 수 있습니다. 왼쪽 `OUTPUT`과 `CODE ANALYSIS`에서 실행 결과, 오류 위치와 간단한 설명을 확인합니다.
+1. Visual Studio에서 `.c`, `.cpp`, `.h` 또는 `.hpp` 문서를 엽니다.
+2. `Maro_CLive_Maro.exe`를 실행하고 연결 상태와 활성 파일을 확인합니다.
+3. 저장하지 않은 편집 내용도 자동 분석됩니다. C/C++ 소스는 `Run`으로 실행하고 헤더는 `Analyze`로 분석만 하며 실행하지 않습니다. `Cancel`은 현재 작업을 중단합니다.
+4. `OUTPUT`에서 실행 결과를, `CODE ANALYSIS`에서 오류 위치·설명·수정 제안을 확인합니다.
 
-테스트는 다음과 같이 실행합니다.
+## 빌드
+
+Visual Studio 2026의 **x64 Native Tools Command Prompt**에서 실행합니다.
 
 ```bat
-msbuild Maro_CLive_Maro_Tests.vcxproj /m /t:Build /p:Configuration=Release /p:Platform=x64
-Maro_Build\x64\Release\Maro_CLive_Maro_Tests.exe
+msbuild Maro_CLive_Maro.sln /m /p:Configuration=Release /p:Platform=x64
 ```

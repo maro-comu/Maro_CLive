@@ -2,6 +2,15 @@
 #include "Maro_Engine.hpp"
 #include "Maro_Process.hpp"
 #include "Maro_Text.hpp"
+#include "Maro_VisualStudio.hpp"
+
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
 
 #include <chrono>
 #include <cstddef>
@@ -9,6 +18,7 @@
 #include <condition_variable>
 #include <exception>
 #include <iostream>
+#include <iterator>
 #include <mutex>
 #include <optional>
 #include <string>
@@ -343,6 +353,139 @@ void Maro_TestEngineCpp20Success(Maro_TestState& state)
         "engine captures C++20 program stdout");
     state.Expect(result->hasExitCode && result->exitCode == 0, "C++20 program exits with code zero");
 }
+
+void Maro_TestVisualStudioLanguageDetection(Maro_TestState& state)
+{
+    const std::vector<std::wstring_view> supportedExtensions = {
+        L".c", L".cc", L".cp", L".cpp", L".cxx", L".c++", L".h", L".hh",
+        L".hpp", L".hxx", L".inl", L".ipp", L".tpp", L".ixx", L".cppm", L".mpp"};
+    for (const std::wstring_view extension : supportedExtensions)
+    {
+        const std::wstring path = L"C:\\Maro_Project\\Maro_Source" + std::wstring(extension);
+        state.Expect(Maro_IsVisualStudioCppPath(path), "Visual Studio C/C++ extension is supported");
+    }
+
+    state.Expect(
+        Maro_IsVisualStudioCppPath(L"C:\\Maro_Project\\Maro_Source.CPP"),
+        "Visual Studio extension matching ignores case");
+    state.Expect(!Maro_IsVisualStudioCppPath(L"Maro_Source.txt"), "text documents are unsupported");
+    state.Expect(!Maro_IsVisualStudioCppPath(L"Maro_Source.rs"), "Rust documents are unsupported");
+    state.Expect(!Maro_IsVisualStudioCppPath(L"Maro_Source"), "extensionless paths are unsupported");
+    state.Expect(!Maro_IsVisualStudioCppPath(L""), "empty paths are unsupported");
+
+    state.Expect(
+        Maro_InferVisualStudioLanguage(L"Maro_Source.c", L"C++", L"namespace Maro {}") ==
+            Maro_Language::C17,
+        "the .c extension has priority and selects C17");
+    state.Expect(
+        Maro_InferVisualStudioLanguage(L"Maro_Source.cpp", L"C", L"_Generic(value, int: 1)") ==
+            Maro_Language::Cpp20,
+        "a C++ extension has priority and selects C++20");
+    state.Expect(
+        Maro_InferVisualStudioLanguage(L"Maro_Source.h", L"C++", L"_Static_assert(1, \"ok\");") ==
+            Maro_Language::C17,
+        "a C indicator in .h selects C17 before the document language");
+    state.Expect(
+        Maro_InferVisualStudioLanguage(L"Maro_Source.h", L"C", L"namespace Maro { class Value {}; }") ==
+            Maro_Language::Cpp20,
+        "a C++ indicator in .h selects C++20 before the document language");
+    state.Expect(
+        Maro_InferVisualStudioLanguage(
+            L"Maro_Source.h",
+            L"C++",
+            L"_Generic(value, int: 1)\nnamespace Maro {}") == Maro_Language::C17,
+        "C indicators take priority when a header contains mixed indicators");
+    state.Expect(
+        Maro_InferVisualStudioLanguage(L"Maro_Source.h", L"C") == Maro_Language::C17,
+        "the Visual Studio C document language resolves an otherwise ambiguous header");
+    state.Expect(
+        Maro_InferVisualStudioLanguage(L"Maro_Source.h", L"C++") == Maro_Language::Cpp20,
+        "the Visual Studio C++ document language resolves an ambiguous header");
+    state.Expect(
+        Maro_InferVisualStudioLanguage(L"Maro_Source.h") == Maro_Language::Cpp20,
+        "an ambiguous header defaults to C++20");
+    state.Expect(
+        Maro_InferVisualStudioLanguage(L"Maro_Untitled", L"C") == Maro_Language::C17,
+        "an extensionless C document is inferred from its Visual Studio language");
+    state.Expect(
+        Maro_InferVisualStudioLanguage(L"Maro_Untitled", L"cpp") == Maro_Language::Cpp20,
+        "an extensionless C++ document is inferred from its Visual Studio language");
+    state.Expect(
+        !Maro_InferVisualStudioLanguage(L"Maro_Source.txt", L"C++").has_value(),
+        "an unsupported extension is not overridden by the document language");
+    state.Expect(
+        !Maro_InferVisualStudioLanguage(L"Maro_Untitled", L"Plain Text").has_value(),
+        "an extensionless non-C/C++ document is not inferred");
+}
+
+void Maro_TestOptionalVisualStudioRead(Maro_TestState& state)
+{
+    wchar_t enabled[16]{};
+    const DWORD length = GetEnvironmentVariableW(
+        L"MARO_CLIVE_TEST_VISUAL_STUDIO",
+        enabled,
+        static_cast<DWORD>(std::size(enabled)));
+    const std::wstring_view mode =
+        length > 0 && length < std::size(enabled) ? std::wstring_view(enabled) : std::wstring_view{};
+    if (mode != L"1" && mode != L"apply")
+    {
+        std::cout << "[SKIP] Visual Studio active-document smoke test\n";
+        return;
+    }
+
+    constexpr std::uint64_t sourceVersion = 9'001;
+    const Maro_VisualStudio visualStudio;
+    const Maro_VisualStudioReadResult result = visualStudio.ReadActiveDocument(sourceVersion);
+    state.Expect(static_cast<bool>(result), "Visual Studio active document can be read through COM");
+    if (!result)
+    {
+        std::cerr << "[INFO] Visual Studio smoke status="
+                  << static_cast<int>(result.status)
+                  << ", instances=" << result.instancesInspected
+                  << ", message=" << Maro_WideToUtf8(result.message) << '\n';
+        return;
+    }
+
+    state.Expect(
+        result.snapshot->sourceVersion == sourceVersion,
+        "Visual Studio snapshot preserves the requested source version");
+    state.Expect(
+        Maro_IsVisualStudioCppPath(result.snapshot->path),
+        "Visual Studio snapshot has a supported C/C++ path");
+    state.Expect(
+        Maro_InferVisualStudioLanguage(
+            result.snapshot->path,
+            result.snapshot->documentLanguage,
+            result.snapshot->text) == result.snapshot->language,
+        "Visual Studio snapshot language agrees with pure language inference");
+
+    if (mode == L"apply")
+    {
+        const Maro_VisualStudioApplyResult applied = visualStudio.ApplyFullText(
+            *result.snapshot,
+            sourceVersion,
+            result.snapshot->text);
+        state.Expect(
+            static_cast<bool>(applied),
+            "Visual Studio accepts a same-text snapshot-validated replacement");
+        if (applied)
+        {
+            state.Expect(applied.snapshotAfter.has_value(), "Visual Studio apply returns a verified snapshot");
+            state.Expect(
+                applied.snapshotAfter->path == result.snapshot->path,
+                "Visual Studio apply preserves the active document path");
+            state.Expect(
+                applied.snapshotAfter->text == result.snapshot->text,
+                "Visual Studio same-text apply preserves document contents");
+        }
+        else
+        {
+            std::cerr << "[INFO] Visual Studio apply status="
+                      << static_cast<int>(applied.status)
+                      << ", message=" << Maro_WideToUtf8(applied.message) << '\n';
+        }
+    }
+}
 } // namespace
 
 int main()
@@ -360,6 +503,8 @@ int main()
         Maro_TestEngineSuccess(state);
         Maro_TestEngineCompileFailure(state);
         Maro_TestEngineCpp20Success(state);
+        Maro_TestVisualStudioLanguageDetection(state);
+        Maro_TestOptionalVisualStudioRead(state);
     }
     catch (const std::exception& error)
     {

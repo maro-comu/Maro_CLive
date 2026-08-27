@@ -569,6 +569,15 @@ std::vector<std::wstring> Maro_CompilerArguments(
             L"-fdiagnostics-parseable-fixits",
             L"-ferror-limit=50"
         };
+        if (!request.sourcePath.empty())
+        {
+            const fs::path includeDirectory = fs::path(request.sourcePath).parent_path();
+            if (!includeDirectory.empty())
+            {
+                arguments.push_back(L"-I");
+                arguments.push_back(includeDirectory.wstring());
+            }
+        }
         if (syntaxOnly)
         {
             arguments.push_back(L"-fsyntax-only");
@@ -598,6 +607,15 @@ std::vector<std::wstring> Maro_CompilerArguments(
         {
             arguments.push_back(L"/EHsc");
             arguments.push_back(L"/permissive-");
+        }
+        if (!request.sourcePath.empty())
+        {
+            const fs::path includeDirectory = fs::path(request.sourcePath).parent_path();
+            if (!includeDirectory.empty())
+            {
+                arguments.push_back(L"/I");
+                arguments.push_back(includeDirectory.wstring());
+            }
         }
         if (syntaxOnly)
         {

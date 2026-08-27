@@ -10,6 +10,9 @@
     <Filter Include="Maro_Headers">
       <UniqueIdentifier>{11CD0B09-0B1C-4683-8B01-CAB71D6DD287}</UniqueIdentifier>
     </Filter>
+    <Filter Include="Maro_VisualStudio">
+      <UniqueIdentifier>{39A67148-A3A5-45C1-8E1A-BEBD4367CB53}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="Maro_CLive_Maro.cpp">
@@ -30,6 +33,9 @@
     <ClCompile Include="Maro_Engine.cpp">
       <Filter>Maro_Core</Filter>
     </ClCompile>
+    <ClCompile Include="Maro_VisualStudio.cpp">
+      <Filter>Maro_VisualStudio</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="Maro_App.hpp">
@@ -49,6 +55,9 @@
     </ClInclude>
     <ClInclude Include="Maro_Engine.hpp">
       <Filter>Maro_Headers</Filter>
+    </ClInclude>
+    <ClInclude Include="Maro_VisualStudio.hpp">
+      <Filter>Maro_VisualStudio</Filter>
     </ClInclude>
   </ItemGroup>
 </Project>

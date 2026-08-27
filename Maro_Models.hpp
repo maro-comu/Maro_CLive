@@ -108,6 +108,7 @@ struct Maro_SourceRequest
 {
     std::uint64_t sourceVersion = 0;
     std::wstring sourceText;
+    std::wstring sourcePath;
     std::wstring standardInput;
     Maro_Language language = Maro_Language::C17;
     Maro_SourceMode mode = Maro_SourceMode::Program;
