@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <ItemGroup>
-    <Filter Include="Maro_UI">
+    <Filter Include="Maro_Console">
       <UniqueIdentifier>{7228DC97-55C7-4662-8CA6-6326B1C02404}</UniqueIdentifier>
     </Filter>
     <Filter Include="Maro_Core">
@@ -16,10 +16,10 @@
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="Maro_CLive_Maro.cpp">
-      <Filter>Maro_UI</Filter>
+      <Filter>Maro_Console</Filter>
     </ClCompile>
     <ClCompile Include="Maro_App.cpp">
-      <Filter>Maro_UI</Filter>
+      <Filter>Maro_Console</Filter>
     </ClCompile>
     <ClCompile Include="Maro_Text.cpp">
       <Filter>Maro_Core</Filter>
