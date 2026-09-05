@@ -1,0 +1,151 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup Label="ProjectConfigurations">
+    <ProjectConfiguration Include="Debug|x64">
+      <Configuration>Debug</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="Release|x64">
+      <Configuration>Release</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+  </ItemGroup>
+  <PropertyGroup Label="Globals">
+    <VCProjectVersion>18.0</VCProjectVersion>
+    <Keyword>Win32Proj</Keyword>
+    <ProjectGuid>{917BE65F-6477-4802-9040-B04CD4EF184D}</ProjectGuid>
+    <RootNamespace>CLive_Maro</RootNamespace>
+    <ProjectName>CLive_Maro_Extension</ProjectName>
+    <WindowsTargetPlatformVersion>10.0</WindowsTargetPlatformVersion>
+  </PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'" Label="Configuration">
+    <ConfigurationType>DynamicLibrary</ConfigurationType>
+    <UseDebugLibraries>true</UseDebugLibraries>
+    <PlatformToolset>v145</PlatformToolset>
+    <CharacterSet>Unicode</CharacterSet>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'" Label="Configuration">
+    <ConfigurationType>DynamicLibrary</ConfigurationType>
+    <UseDebugLibraries>false</UseDebugLibraries>
+    <PlatformToolset>v145</PlatformToolset>
+    <WholeProgramOptimization>true</WholeProgramOptimization>
+    <CharacterSet>Unicode</CharacterSet>
+  </PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
+  <ImportGroup Label="ExtensionSettings" />
+  <ImportGroup Label="Shared" />
+  <ImportGroup Label="PropertySheets" Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
+    <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props"
+            Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')"
+            Label="LocalAppDataPlatform" />
+  </ImportGroup>
+  <ImportGroup Label="PropertySheets" Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
+    <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props"
+            Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')"
+            Label="LocalAppDataPlatform" />
+  </ImportGroup>
+  <PropertyGroup Label="UserMacros" />
+  <PropertyGroup>
+    <TargetName>Maro_CLive_Maro</TargetName>
+    <OutDir>$(ProjectDir)Maro_Build\$(Platform)\$(Configuration)\Maro_Extension\</OutDir>
+    <IntDir>$(ProjectDir)Maro_Build\Maro_Intermediate\Maro_CLive_Maro_Extension\$(Platform)\$(Configuration)\</IntDir>
+    <MaroVssdkRoot>$(MSBuildExtensionsPath32)\..\VSSDK\VisualStudioIntegration</MaroVssdkRoot>
+  </PropertyGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
+    <ClCompile>
+      <WarningLevel>Level4</WarningLevel>
+      <TreatWarningAsError>true</TreatWarningAsError>
+      <SDLCheck>true</SDLCheck>
+      <PreprocessorDefinitions>WIN32;_WINDOWS;_USRDLL;UNICODE;_UNICODE;WIN32_LEAN_AND_MEAN;NOMINMAX;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <ConformanceMode>true</ConformanceMode>
+      <LanguageStandard>stdcpp20</LanguageStandard>
+      <MultiProcessorCompilation>true</MultiProcessorCompilation>
+      <AdditionalOptions>/utf-8 /FS %(AdditionalOptions)</AdditionalOptions>
+      <RuntimeLibrary>MultiThreadedDebug</RuntimeLibrary>
+      <BasicRuntimeChecks>EnableFastChecks</BasicRuntimeChecks>
+      <DebugInformationFormat>ProgramDatabase</DebugInformationFormat>
+      <AdditionalIncludeDirectories>$(MaroVssdkRoot)\Common\Inc;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+    </ClCompile>
+    <Link>
+      <SubSystem>Windows</SubSystem>
+      <GenerateDebugInformation>true</GenerateDebugInformation>
+      <ModuleDefinitionFile>$(ProjectDir)Maro_CLive_Maro_Extension.def</ModuleDefinitionFile>
+      <AdditionalLibraryDirectories>$(MaroVssdkRoot)\Common\Lib\x64;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+      <AdditionalDependencies>vsguids.lib;user32.lib;ole32.lib;oleaut32.lib;advapi32.lib;userenv.lib;%(AdditionalDependencies)</AdditionalDependencies>
+    </Link>
+    <ResourceCompile>
+      <PreprocessorDefinitions>MARO_DEBUG_BUILD;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ResourceCompile>
+  </ItemDefinitionGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
+    <ClCompile>
+      <WarningLevel>Level4</WarningLevel>
+      <TreatWarningAsError>true</TreatWarningAsError>
+      <FunctionLevelLinking>true</FunctionLevelLinking>
+      <IntrinsicFunctions>true</IntrinsicFunctions>
+      <SDLCheck>true</SDLCheck>
+      <PreprocessorDefinitions>WIN32;_WINDOWS;_USRDLL;NDEBUG;UNICODE;_UNICODE;WIN32_LEAN_AND_MEAN;NOMINMAX;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <ConformanceMode>true</ConformanceMode>
+      <LanguageStandard>stdcpp20</LanguageStandard>
+      <MultiProcessorCompilation>true</MultiProcessorCompilation>
+      <AdditionalOptions>/utf-8 /FS %(AdditionalOptions)</AdditionalOptions>
+      <RuntimeLibrary>MultiThreaded</RuntimeLibrary>
+      <Optimization>MaxSpeed</Optimization>
+      <AdditionalIncludeDirectories>$(MaroVssdkRoot)\Common\Inc;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+    </ClCompile>
+    <Link>
+      <SubSystem>Windows</SubSystem>
+      <EnableCOMDATFolding>true</EnableCOMDATFolding>
+      <OptimizeReferences>true</OptimizeReferences>
+      <GenerateDebugInformation>true</GenerateDebugInformation>
+      <ModuleDefinitionFile>$(ProjectDir)Maro_CLive_Maro_Extension.def</ModuleDefinitionFile>
+      <AdditionalLibraryDirectories>$(MaroVssdkRoot)\Common\Lib\x64;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+      <AdditionalDependencies>vsguids.lib;user32.lib;ole32.lib;oleaut32.lib;advapi32.lib;userenv.lib;%(AdditionalDependencies)</AdditionalDependencies>
+    </Link>
+  </ItemDefinitionGroup>
+  <ItemGroup>
+    <ClCompile Include="Maro_CLive_Maro_Module.cpp" />
+    <ClCompile Include="Maro_CLive_Maro_Package.cpp" />
+    <ClCompile Include="Maro_Text.cpp" />
+    <ClCompile Include="Maro_Process.cpp" />
+    <ClCompile Include="Maro_Analyzer.cpp" />
+    <ClCompile Include="Maro_Engine.cpp" />
+  </ItemGroup>
+  <ItemGroup>
+    <ResourceCompile Include="Maro_CLive_Maro_Resources.rc" />
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="Maro_CLive_Maro_Package.hpp" />
+    <ClInclude Include="Maro_Models.hpp" />
+    <ClInclude Include="Maro_Text.hpp" />
+    <ClInclude Include="Maro_Process.hpp" />
+    <ClInclude Include="Maro_Analyzer.hpp" />
+    <ClInclude Include="Maro_Engine.hpp" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="Maro_CLive_Maro_Extension.def" />
+    <None Include="Maro_CLive_Maro.pkgdef" />
+    <None Include="Maro_CLive_Maro.vsixmanifest" />
+    <None Include="Maro_CLive_Maro.vsct" />
+  </ItemGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
+  <Target Name="Maro_CompileCommandTable"
+          BeforeTargets="ResourceCompile"
+          Inputs="$(ProjectDir)Maro_CLive_Maro.vsct"
+          Outputs="$(IntDir)Maro_CLive_Maro.cto">
+    <Message Importance="High" Text="Compiling CLive_Maro command table" />
+    <MakeDir Directories="$(IntDir)" />
+    <Exec Command="&quot;$(MaroVssdkRoot)\Tools\Bin\VSCT.exe&quot; &quot;$(ProjectDir)Maro_CLive_Maro.vsct&quot; &quot;$(IntDir)Maro_CLive_Maro.cto&quot; -I&quot;$(MaroVssdkRoot)\Common\Inc&quot; -nologo" />
+  </Target>
+  <Target Name="Maro_CreateUiLibraries"
+          AfterTargets="Link"
+          Inputs="$(IntDir)Maro_CLive_Maro_Resources.res"
+          Outputs="$(OutDir)1042\Maro_CLive_MaroUI.dll;$(OutDir)1033\Maro_CLive_MaroUI.dll">
+    <MakeDir Directories="$(OutDir)1042;$(OutDir)1033" />
+    <Exec Command="&quot;$(VCToolsInstallDir)bin\Hostx64\x64\link.exe&quot; /NOLOGO /DLL /NOENTRY /MACHINE:X64 /OUT:&quot;$(OutDir)1042\Maro_CLive_MaroUI.dll&quot; &quot;$(IntDir)Maro_CLive_Maro_Resources.res&quot;" />
+    <Copy SourceFiles="$(OutDir)1042\Maro_CLive_MaroUI.dll"
+          DestinationFiles="$(OutDir)1033\Maro_CLive_MaroUI.dll" />
+  </Target>
+  <ImportGroup Label="ExtensionTargets" />
+</Project>

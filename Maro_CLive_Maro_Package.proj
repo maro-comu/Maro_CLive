@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project DefaultTargets="Maro_Package" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <PropertyGroup>
+    <VisualStudioVersion Condition="'$(VisualStudioVersion)'==''">18.0</VisualStudioVersion>
+    <Configuration Condition="'$(Configuration)'==''">Release</Configuration>
+    <Platform Condition="'$(Platform)'==''">x64</Platform>
+    <MaroExtensionDirectory>$(MSBuildProjectDirectory)\Maro_Build\$(Platform)\$(Configuration)\Maro_Extension</MaroExtensionDirectory>
+    <MaroPackageDirectory>$(MSBuildProjectDirectory)\Maro_Build\$(Platform)\$(Configuration)\Maro_Package</MaroPackageDirectory>
+    <MaroIntermediateDirectory>$(MSBuildProjectDirectory)\Maro_Build\Maro_Intermediate\Maro_Package\$(Platform)\$(Configuration)</MaroIntermediateDirectory>
+    <MaroFilesManifest>$(MaroIntermediateDirectory)\Maro_Files.json</MaroFilesManifest>
+    <MaroVsix>$(MaroPackageDirectory)\Maro_CLive_Maro.vsix</MaroVsix>
+  </PropertyGroup>
+
+  <Import Project="$(MSBuildExtensionsPath32)\Microsoft\VisualStudio\v$(VisualStudioVersion)\VSSDK\Microsoft.VsSDK.targets" />
+
+  <Target Name="Maro_Package">
+    <Error Condition="!Exists('$(MaroExtensionDirectory)\Maro_CLive_Maro.dll')"
+           Text="Build Maro_CLive_Maro_Extension.vcxproj first." />
+    <Error Condition="!Exists('$(MaroExtensionDirectory)\1042\Maro_CLive_MaroUI.dll')"
+           Text="The CLive_Maro Korean UI resource is missing." />
+    <Error Condition="!Exists('$(MaroExtensionDirectory)\1033\Maro_CLive_MaroUI.dll')"
+           Text="The CLive_Maro fallback UI resource is missing." />
+    <MakeDir Directories="$(MaroPackageDirectory);$(MaroIntermediateDirectory)" />
+    <ItemGroup>
+      <MaroVsixFile Include="$(MaroExtensionDirectory)\Maro_CLive_Maro.dll">
+        <TargetPath>Maro_CLive_Maro.dll</TargetPath>
+      </MaroVsixFile>
+      <MaroVsixFile Include="$(MSBuildProjectDirectory)\Maro_CLive_Maro.pkgdef">
+        <TargetPath>Maro_CLive_Maro.pkgdef</TargetPath>
+      </MaroVsixFile>
+      <MaroVsixFile Include="$(MaroExtensionDirectory)\1042\Maro_CLive_MaroUI.dll">
+        <TargetPath>1042\Maro_CLive_MaroUI.dll</TargetPath>
+      </MaroVsixFile>
+      <MaroVsixFile Include="$(MaroExtensionDirectory)\1033\Maro_CLive_MaroUI.dll">
+        <TargetPath>1033\Maro_CLive_MaroUI.dll</TargetPath>
+      </MaroVsixFile>
+    </ItemGroup>
+    <GenerateFileManifest FileItems="@(MaroVsixFile)"
+                          FileManifest="$(MaroFilesManifest)"
+                          NgenLocalized="false" />
+    <VsixUtil Command="package"
+              SourceManifest="$(MSBuildProjectDirectory)\Maro_CLive_Maro.vsixmanifest"
+              ZipPackage="$(MaroVsix)"
+              FilesManifest="$(MaroFilesManifest)"
+              CompressionLevel="Normal"
+              Is64BitBuild="true"
+              SetupProductArch="amd64" />
+    <Message Importance="High" Text="CLive_Maro VSIX -&gt; $(MaroVsix)" />
+  </Target>
+</Project>

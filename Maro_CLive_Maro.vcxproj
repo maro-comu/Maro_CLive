@@ -43,30 +43,34 @@
   </ImportGroup>
   <PropertyGroup Label="UserMacros" />
   <PropertyGroup>
-    <TargetName>Maro_CLive_Maro</TargetName>
+    <TargetName>Maro_CLive_Maro_v1.0.0</TargetName>
     <OutDir>$(ProjectDir)Maro_Build\$(Platform)\$(Configuration)\</OutDir>
     <IntDir>$(ProjectDir)Maro_Build\Maro_Intermediate\Maro_CLive_Maro\$(Platform)\$(Configuration)\</IntDir>
+    <MaroVsixPath>$(ProjectDir)Maro_Build\$(Platform)\$(Configuration)\Maro_Package\Maro_CLive_Maro.vsix</MaroVsixPath>
   </PropertyGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
     <ClCompile>
       <WarningLevel>Level4</WarningLevel>
       <TreatWarningAsError>true</TreatWarningAsError>
       <SDLCheck>true</SDLCheck>
-      <PreprocessorDefinitions>WIN32;_CONSOLE;UNICODE;_UNICODE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PreprocessorDefinitions>WIN32;_WINDOWS;UNICODE;_UNICODE;WIN32_LEAN_AND_MEAN;NOMINMAX;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
       <LanguageStandard>stdcpp20</LanguageStandard>
       <MultiProcessorCompilation>true</MultiProcessorCompilation>
       <AdditionalOptions>/utf-8 /FS %(AdditionalOptions)</AdditionalOptions>
-      <RuntimeLibrary>MultiThreadedDebugDLL</RuntimeLibrary>
+      <RuntimeLibrary>MultiThreadedDebug</RuntimeLibrary>
       <BasicRuntimeChecks>EnableFastChecks</BasicRuntimeChecks>
       <DebugInformationFormat>ProgramDatabase</DebugInformationFormat>
     </ClCompile>
     <Link>
-      <SubSystem>Console</SubSystem>
+      <SubSystem>Windows</SubSystem>
       <GenerateDebugInformation>true</GenerateDebugInformation>
-      <AdditionalDependencies>user32.lib;ole32.lib;oleaut32.lib;advapi32.lib;userenv.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>user32.lib;shell32.lib;ole32.lib;%(AdditionalDependencies)</AdditionalDependencies>
       <UACExecutionLevel>AsInvoker</UACExecutionLevel>
     </Link>
+    <ResourceCompile>
+      <PreprocessorDefinitions>MARO_DEBUG_BUILD;MARO_CLIVE_MARO_EMBEDDED_VSIX=&quot;$(MaroVsixPath)&quot;;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ResourceCompile>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
     <ClCompile>
@@ -75,41 +79,49 @@
       <FunctionLevelLinking>true</FunctionLevelLinking>
       <IntrinsicFunctions>true</IntrinsicFunctions>
       <SDLCheck>true</SDLCheck>
-      <PreprocessorDefinitions>WIN32;_CONSOLE;NDEBUG;UNICODE;_UNICODE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PreprocessorDefinitions>WIN32;_WINDOWS;NDEBUG;UNICODE;_UNICODE;WIN32_LEAN_AND_MEAN;NOMINMAX;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
       <LanguageStandard>stdcpp20</LanguageStandard>
       <MultiProcessorCompilation>true</MultiProcessorCompilation>
       <AdditionalOptions>/utf-8 /FS %(AdditionalOptions)</AdditionalOptions>
-      <RuntimeLibrary>MultiThreadedDLL</RuntimeLibrary>
+      <RuntimeLibrary>MultiThreaded</RuntimeLibrary>
       <Optimization>MaxSpeed</Optimization>
     </ClCompile>
     <Link>
-      <SubSystem>Console</SubSystem>
+      <SubSystem>Windows</SubSystem>
       <EnableCOMDATFolding>true</EnableCOMDATFolding>
       <OptimizeReferences>true</OptimizeReferences>
       <GenerateDebugInformation>true</GenerateDebugInformation>
-      <AdditionalDependencies>user32.lib;ole32.lib;oleaut32.lib;advapi32.lib;userenv.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>user32.lib;shell32.lib;ole32.lib;%(AdditionalDependencies)</AdditionalDependencies>
       <UACExecutionLevel>AsInvoker</UACExecutionLevel>
     </Link>
+    <ResourceCompile>
+      <PreprocessorDefinitions>MARO_CLIVE_MARO_EMBEDDED_VSIX=&quot;$(MaroVsixPath)&quot;;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ResourceCompile>
   </ItemDefinitionGroup>
   <ItemGroup>
-    <ClCompile Include="Maro_CLive_Maro.cpp" />
-    <ClCompile Include="Maro_App.cpp" />
-    <ClCompile Include="Maro_Text.cpp" />
-    <ClCompile Include="Maro_Process.cpp" />
-    <ClCompile Include="Maro_Analyzer.cpp" />
-    <ClCompile Include="Maro_Engine.cpp" />
-    <ClCompile Include="Maro_VisualStudio.cpp" />
+    <ClCompile Include="Maro_CLive_Maro_Setup.cpp" />
   </ItemGroup>
   <ItemGroup>
-    <ClInclude Include="Maro_App.hpp" />
-    <ClInclude Include="Maro_Models.hpp" />
-    <ClInclude Include="Maro_Text.hpp" />
-    <ClInclude Include="Maro_Process.hpp" />
-    <ClInclude Include="Maro_Analyzer.hpp" />
-    <ClInclude Include="Maro_Engine.hpp" />
-    <ClInclude Include="Maro_VisualStudio.hpp" />
+    <ClInclude Include="Maro_CLive_Maro_Setup.hpp" />
+  </ItemGroup>
+  <ItemGroup>
+    <ResourceCompile Include="Maro_CLive_Maro_Setup.rc" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="Maro_CLive_Maro_Extension.vcxproj">
+      <Project>{917BE65F-6477-4802-9040-B04CD4EF184D}</Project>
+      <ReferenceOutputAssembly>false</ReferenceOutputAssembly>
+      <LinkLibraryDependencies>false</LinkLibraryDependencies>
+    </ProjectReference>
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
+  <Target Name="Maro_BuildEmbeddedVsix"
+          BeforeTargets="ResourceCompile"
+          DependsOnTargets="ResolveProjectReferences">
+    <MSBuild Projects="$(ProjectDir)Maro_CLive_Maro_Package.proj"
+             Targets="Maro_Package"
+             Properties="Configuration=$(Configuration);Platform=$(Platform);VisualStudioVersion=$(VisualStudioVersion)" />
+  </Target>
   <ImportGroup Label="ExtensionTargets" />
 </Project>

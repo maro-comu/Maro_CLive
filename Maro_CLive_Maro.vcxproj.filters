@@ -1,63 +1,26 @@
 <?xml version="1.0" encoding="utf-8"?>
 <Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <ItemGroup>
-    <Filter Include="Maro_Console">
+    <Filter Include="Maro_Setup">
       <UniqueIdentifier>{7228DC97-55C7-4662-8CA6-6326B1C02404}</UniqueIdentifier>
-    </Filter>
-    <Filter Include="Maro_Core">
-      <UniqueIdentifier>{3F5AFDA9-9E31-4AB2-BC0D-26B0BCF65C4D}</UniqueIdentifier>
     </Filter>
     <Filter Include="Maro_Headers">
       <UniqueIdentifier>{11CD0B09-0B1C-4683-8B01-CAB71D6DD287}</UniqueIdentifier>
     </Filter>
-    <Filter Include="Maro_VisualStudio">
-      <UniqueIdentifier>{39A67148-A3A5-45C1-8E1A-BEBD4367CB53}</UniqueIdentifier>
-    </Filter>
   </ItemGroup>
   <ItemGroup>
-    <ClCompile Include="Maro_CLive_Maro.cpp">
-      <Filter>Maro_Console</Filter>
-    </ClCompile>
-    <ClCompile Include="Maro_App.cpp">
-      <Filter>Maro_Console</Filter>
-    </ClCompile>
-    <ClCompile Include="Maro_Text.cpp">
-      <Filter>Maro_Core</Filter>
-    </ClCompile>
-    <ClCompile Include="Maro_Process.cpp">
-      <Filter>Maro_Core</Filter>
-    </ClCompile>
-    <ClCompile Include="Maro_Analyzer.cpp">
-      <Filter>Maro_Core</Filter>
-    </ClCompile>
-    <ClCompile Include="Maro_Engine.cpp">
-      <Filter>Maro_Core</Filter>
-    </ClCompile>
-    <ClCompile Include="Maro_VisualStudio.cpp">
-      <Filter>Maro_VisualStudio</Filter>
+    <ClCompile Include="Maro_CLive_Maro_Setup.cpp">
+      <Filter>Maro_Setup</Filter>
     </ClCompile>
   </ItemGroup>
   <ItemGroup>
-    <ClInclude Include="Maro_App.hpp">
+    <ClInclude Include="Maro_CLive_Maro_Setup.hpp">
       <Filter>Maro_Headers</Filter>
     </ClInclude>
-    <ClInclude Include="Maro_Models.hpp">
-      <Filter>Maro_Headers</Filter>
-    </ClInclude>
-    <ClInclude Include="Maro_Text.hpp">
-      <Filter>Maro_Headers</Filter>
-    </ClInclude>
-    <ClInclude Include="Maro_Process.hpp">
-      <Filter>Maro_Headers</Filter>
-    </ClInclude>
-    <ClInclude Include="Maro_Analyzer.hpp">
-      <Filter>Maro_Headers</Filter>
-    </ClInclude>
-    <ClInclude Include="Maro_Engine.hpp">
-      <Filter>Maro_Headers</Filter>
-    </ClInclude>
-    <ClInclude Include="Maro_VisualStudio.hpp">
-      <Filter>Maro_VisualStudio</Filter>
-    </ClInclude>
+  </ItemGroup>
+  <ItemGroup>
+    <ResourceCompile Include="Maro_CLive_Maro_Setup.rc">
+      <Filter>Maro_Setup</Filter>
+    </ResourceCompile>
   </ItemGroup>
 </Project>

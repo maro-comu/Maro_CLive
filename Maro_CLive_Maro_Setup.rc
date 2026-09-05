@@ -1,0 +1,40 @@
+#include <windows.h>
+#include "Maro_CLive_Maro_Setup.hpp"
+
+#ifndef MARO_CLIVE_MARO_EMBEDDED_VSIX
+#error MARO_CLIVE_MARO_EMBEDDED_VSIX must point to the packaged VSIX.
+#endif
+
+MARO_CLIVE_MARO_VSIX_RESOURCE RCDATA MARO_CLIVE_MARO_EMBEDDED_VSIX
+
+VS_VERSION_INFO VERSIONINFO
+ FILEVERSION 1,0,0,0
+ PRODUCTVERSION 1,0,0,0
+ FILEFLAGSMASK 0x3fL
+#ifdef MARO_DEBUG_BUILD
+ FILEFLAGS VS_FF_DEBUG
+#else
+ FILEFLAGS 0x0L
+#endif
+ FILEOS VOS_NT_WINDOWS32
+ FILETYPE VFT_APP
+ FILESUBTYPE 0x0L
+BEGIN
+    BLOCK "StringFileInfo"
+    BEGIN
+        BLOCK "041204B0"
+        BEGIN
+            VALUE "CompanyName", "Maro\0"
+            VALUE "FileDescription", "CLive_Maro Visual Studio extension installer\0"
+            VALUE "FileVersion", "1.0.0\0"
+            VALUE "InternalName", "CLive_Maro\0"
+            VALUE "OriginalFilename", "Maro_CLive_Maro_v1.0.0.exe\0"
+            VALUE "ProductName", "CLive_Maro\0"
+            VALUE "ProductVersion", "1.0.0\0"
+        END
+    END
+    BLOCK "VarFileInfo"
+    BEGIN
+        VALUE "Translation", 0x0412, 1200
+    END
+END

@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="utf-8"?>
+<CommandTable xmlns="http://schemas.microsoft.com/VisualStudio/2005-10-18/CommandTable"
+              xmlns:xs="http://www.w3.org/2001/XMLSchema">
+  <Extern href="stdidcmd.h" />
+  <Extern href="vsshlids.h" />
+
+  <Commands package="guidMaroPackage">
+    <Groups>
+      <Group guid="guidMaroCommandSet" id="MaroCommandGroup" priority="0x0600">
+        <Parent guid="guidSHLMainMenu" id="IDM_VS_MENU_TOOLS" />
+      </Group>
+    </Groups>
+
+    <Buttons>
+      <Button guid="guidMaroCommandSet" id="MaroCommandAnalyze" priority="0x0100" type="Button">
+        <Parent guid="guidMaroCommandSet" id="MaroCommandGroup" />
+        <Strings>
+          <ButtonText>CLive_Maro 분석</ButtonText>
+          <CommandName>CLive_Maro.Analyze</CommandName>
+        </Strings>
+      </Button>
+      <Button guid="guidMaroCommandSet" id="MaroCommandRun" priority="0x0110" type="Button">
+        <Parent guid="guidMaroCommandSet" id="MaroCommandGroup" />
+        <Strings>
+          <ButtonText>CLive_Maro 분석 및 실행</ButtonText>
+          <CommandName>CLive_Maro.Run</CommandName>
+        </Strings>
+      </Button>
+    </Buttons>
+  </Commands>
+
+  <Symbols>
+    <GuidSymbol name="guidMaroPackage" value="{c766c863-83a1-4fcf-bbf5-f26ffc83796b}" />
+    <GuidSymbol name="guidMaroCommandSet" value="{24748981-75eb-4e44-bcbe-9f920d16d3c3}">
+      <IDSymbol name="MaroCommandAnalyze" value="0x0100" />
+      <IDSymbol name="MaroCommandRun" value="0x0101" />
+      <IDSymbol name="MaroCommandGroup" value="0x1020" />
+    </GuidSymbol>
+  </Symbols>
+</CommandTable>
