@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup>
+    <Filter Include="maro_Source">
+      <UniqueIdentifier>{8FACC981-8CCE-432F-B49C-7F361059718E}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="maro_Header">
+      <UniqueIdentifier>{133D77BE-F5EC-4E9A-AB70-72F6FE43A5B4}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="maro_Package">
+      <UniqueIdentifier>{D79B4D5D-95F1-4284-9588-2DB49B195774}</UniqueIdentifier>
+    </Filter>
+  </ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="maro_CLive_Maro_Module.cpp"><Filter>maro_Source</Filter></ClCompile>
+    <ClCompile Include="maro_CLive_Maro_Package.cpp"><Filter>maro_Source</Filter></ClCompile>
+    <ClCompile Include="maro_VisualStudio.cpp"><Filter>maro_Source</Filter></ClCompile>
+    <ClCompile Include="maro_Text.cpp"><Filter>maro_Source</Filter></ClCompile>
+    <ClCompile Include="maro_Process.cpp"><Filter>maro_Source</Filter></ClCompile>
+    <ClCompile Include="maro_Analyzer.cpp"><Filter>maro_Source</Filter></ClCompile>
+    <ClCompile Include="maro_Engine.cpp"><Filter>maro_Source</Filter></ClCompile>
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="maro_CLive_Maro_Package.hpp"><Filter>maro_Header</Filter></ClInclude>
+    <ClInclude Include="maro_VisualStudio.hpp"><Filter>maro_Header</Filter></ClInclude>
+    <ClInclude Include="maro_Models.hpp"><Filter>maro_Header</Filter></ClInclude>
+    <ClInclude Include="maro_Text.hpp"><Filter>maro_Header</Filter></ClInclude>
+    <ClInclude Include="maro_Process.hpp"><Filter>maro_Header</Filter></ClInclude>
+    <ClInclude Include="maro_Analyzer.hpp"><Filter>maro_Header</Filter></ClInclude>
+    <ClInclude Include="maro_Engine.hpp"><Filter>maro_Header</Filter></ClInclude>
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="maro_CLive_Maro_Extension.def"><Filter>maro_Package</Filter></None>
+    <None Include="maro_CLive_Maro.pkgdef"><Filter>maro_Package</Filter></None>
+    <None Include="maro_CLive_Maro.vsixmanifest"><Filter>maro_Package</Filter></None>
+    <None Include="maro_CLive_Maro.vsct"><Filter>maro_Package</Filter></None>
+  </ItemGroup>
+  <ItemGroup>
+    <ResourceCompile Include="maro_CLive_Maro_Resources.rc"><Filter>maro_Package</Filter></ResourceCompile>
+  </ItemGroup>
+</Project>

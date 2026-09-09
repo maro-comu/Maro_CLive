@@ -1,0 +1,6 @@
+LIBRARY "maro_CLive_Maro"
+EXPORTS
+    DllCanUnloadNow PRIVATE
+    DllGetClassObject PRIVATE
+    DllRegisterServer PRIVATE
+    DllUnregisterServer PRIVATE

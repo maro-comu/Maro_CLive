@@ -1,0 +1,19 @@
+[$RootKey$\Packages\{c766c863-83a1-4fcf-bbf5-f26ffc83796b}]
+@="CLive_Maro"
+"InprocServer32"="$PackageFolder$\maro_CLive_Maro.dll"
+"CompanyName"="Maro"
+"ProductName"="CLive_Maro"
+"ProductVersion"="1.2.1"
+"MinEdition"="Community"
+"ID"=dword:00000001
+"AllowsBackgroundLoad"=dword:00000001
+
+[$RootKey$\AutoLoadPackages\{e80ef1cb-6d64-4609-8faa-feacfd3bc89f}]
+"{c766c863-83a1-4fcf-bbf5-f26ffc83796b}"=dword:00000002
+
+[$RootKey$\Packages\{c766c863-83a1-4fcf-bbf5-f26ffc83796b}\SatelliteDll]
+"DllName"="maro_CLive_MaroUI.dll"
+"Path"="$PackageFolder$"
+
+[$RootKey$\Menus]
+"{c766c863-83a1-4fcf-bbf5-f26ffc83796b}"=", 1000, 1"

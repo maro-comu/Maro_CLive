@@ -1,0 +1,7 @@
+#include <windows.h>
+
+#ifdef MARO_DEBUG_BUILD
+1000 CTMENU "maro_Build\\maro_Intermediate\\maro_CLive_Maro_Extension\\x64\\Debug\\maro_CLive_Maro.cto"
+#else
+1000 CTMENU "maro_Build\\maro_Intermediate\\maro_CLive_Maro_Extension\\x64\\Release\\maro_CLive_Maro.cto"
+#endif
