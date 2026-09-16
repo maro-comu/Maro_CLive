@@ -2,6 +2,7 @@
 #include "maro_Engine.hpp"
 #include "maro_Process.hpp"
 #include "maro_Text.hpp"
+#include "maro_Update.hpp"
 #include "maro_VisualStudio.hpp"
 
 #ifndef WIN32_LEAN_AND_MEAN
@@ -17,6 +18,7 @@
 #include <cstdint>
 #include <condition_variable>
 #include <exception>
+#include <filesystem>
 #include <iostream>
 #include <iterator>
 #include <mutex>
@@ -643,6 +645,152 @@ void Maro_TestOptionalVisualStudioRead(Maro_TestState& state)
         }
     }
 }
+
+void maro_TestUpdates(Maro_TestState& state)
+{
+    for (const std::string_view maro_text : {
+             "v0.0.0", "v1.2.2", "v1.10.0", "v4294967295.4294967295.4294967295"})
+    {
+        const auto maro_version = maro_ParseSemanticVersion(maro_text);
+        state.Expect(maro_version.has_value(), "valid numeric update version is accepted");
+        state.Expect(
+            maro_version && maro_FormatSemanticVersion(*maro_version) == maro_text,
+            "numeric update version round-trips without truncation");
+    }
+    for (const std::string_view maro_text : {
+             "", "v", "1.2.2", "V1.2.2", "v1.2", "v1.2.3.4", "v.2.3", "v1..3",
+             "v1.2.", "v01.2.3", "v1.02.3", "v1.2.03", "v+1.2.3", "v1.-2.3",
+             "v1.2.3-rc1", "v1.2.3+build", " v1.2.3", "v1.2.3\n", "v1.2.x",
+             "v4294967296.0.0", "v0.4294967296.0", "v0.0.4294967296",
+             "v999999999999999999999999999999.0.0"})
+    {
+        state.Expect(!maro_ParseSemanticVersion(maro_text), "malformed or overflowing version is rejected");
+    }
+    state.Expect(maro_CompareSemanticVersions({1, 9, 9}, {1, 10, 0}) < 0, "minor version comparison is numeric");
+    state.Expect(maro_CompareSemanticVersions({1, 2, 9}, {1, 2, 10}) < 0, "patch version comparison is numeric");
+    state.Expect(maro_CompareSemanticVersions({2, 0, 0}, {1, 99, 99}) > 0, "major version has priority");
+    state.Expect(maro_CompareSemanticVersions({1, 3, 0}, {1, 2, 99}) > 0, "minor version has priority");
+    state.Expect(maro_CompareSemanticVersions({1, 2, 2}, {1, 2, 2}) == 0, "identical versions compare equal");
+
+    const std::string maro_asset =
+        R"({"name":"maro_CLive_Maro_v1.2.2.exe","size":420352,)"
+        R"("browser_download_url":"https://github.com/maro-comu/Maro_CLive/releases/download/v1.2.2/maro_CLive_Maro_v1.2.2.exe",)"
+        R"("digest":"sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"})";
+    const std::string maro_json =
+        R"({"tag_name":"v1.2.2","draft":false,"prerelease":false,"assets":[)" + maro_asset +
+        R"(,{"name":"maro_CLive_Maro_v1.2.2.zip","size":596075}],)"
+        R"("body":"\uC5C5\uB370\uC774\uD2B8 \uD83D\uDE80","author":{"id":42,"flags":[true,null,-1.25e+2]}})";
+    Maro_UpdateRelease maro_release;
+    std::string maro_error = "previous error";
+    state.Expect(maro_ParseUpdateReleaseJson(maro_json, maro_release, maro_error), "published GitHub release is accepted");
+    state.Expect(maro_error.empty(), "successful release parse clears the previous error");
+    state.Expect(
+        maro_release.tag == "v1.2.2" && maro_release.version.major == 1 &&
+            maro_release.version.minor == 2 && maro_release.version.patch == 2,
+        "release contains the expected numeric version");
+    state.Expect(
+        maro_release.asset.fileName == L"maro_CLive_Maro_v1.2.2.exe" && maro_release.asset.size == 420352,
+        "updater selects the versioned EXE instead of the ZIP");
+    state.Expect(
+        maro_release.asset.sha256[0] == 0x01 && maro_release.asset.sha256[7] == 0xef &&
+            maro_release.asset.sha256[31] == 0xef,
+        "release SHA-256 is decoded into bytes");
+    const auto maro_replace = [&maro_json](std::string_view maro_from, std::string_view maro_to) {
+        std::string maro_result = maro_json;
+        maro_result.replace(maro_result.find(maro_from), maro_from.size(), maro_to);
+        return maro_result;
+    };
+    const std::vector<std::pair<std::string, std::string_view>> maro_invalid = {
+        {maro_replace(R"("draft":false)", R"("draft":true)"), "draft release is rejected"},
+        {maro_replace(R"("prerelease":false)", R"("prerelease":true)"), "prerelease is rejected"},
+        {maro_replace(R"("draft":false,)", ""), "missing draft flag is rejected"},
+        {maro_replace(R"("prerelease":false)", R"("prerelease":"false")"), "non-boolean release flag is rejected"},
+        {maro_replace(R"("tag_name":"v1.2.2")", R"("tag_name":"v1.2.2-rc1")"), "non-stable release tag is rejected"},
+        {maro_replace("https://github.com/", "http://github.com/"), "HTTP asset URL is rejected"},
+        {maro_replace("github.com/", "github.com.example/"), "lookalike download host is rejected"},
+        {maro_replace("maro-comu/Maro_CLive/releases", "other/Maro_CLive/releases"), "another repository asset is rejected"},
+        {maro_replace("download/v1.2.2/", "download/v1.2.1/"), "asset from another release is rejected"},
+        {maro_replace(R"(.exe","digest")", R"(.exe?download=1","digest")"), "unexpected asset URL query is rejected"},
+        {maro_replace(R"(,"digest":"sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")", ""), "missing SHA-256 is rejected"},
+        {maro_replace(R"("sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")", "null"), "null SHA-256 is rejected"},
+        {maro_replace("sha256:", "sha512:"), "wrong hash algorithm is rejected"},
+        {maro_replace("sha256:0123", "sha256:012"), "short SHA-256 is rejected"},
+        {maro_replace("sha256:0123", "sha256:g123"), "non-hex SHA-256 is rejected"},
+        {maro_replace("420352", "0"), "zero-size installer is rejected"},
+        {maro_replace("420352", "-1"), "negative installer size is rejected"},
+        {maro_replace("420352", "18446744073709551616"), "overflowing installer size is rejected"},
+        {maro_replace("420352", "420352.0"), "fractional installer size is rejected"},
+        {maro_replace(maro_asset, maro_asset + "," + maro_asset), "duplicate matching installers are rejected"},
+        {R"({"tag_name":"v1.2.2","draft":false,"prerelease":false,"assets":[]})", "empty assets are rejected"},
+        {maro_json + "false", "trailing release data is rejected"},
+        {maro_json.substr(0, maro_json.size() - 1), "truncated release JSON is rejected"},
+        {maro_replace(R"(\uD83D\uDE80)", R"(\uD83D\u0041)"), "malformed Unicode escape is rejected"}};
+    for (const auto& [maro_input, maro_message] : maro_invalid)
+    {
+        maro_error.clear();
+        state.Expect(!maro_ParseUpdateReleaseJson(maro_input, maro_release, maro_error), maro_message);
+        state.Expect(!maro_error.empty(), "rejected update metadata supplies an error");
+    }
+    state.Expect(
+        maro_release.tag == "v1.2.2" && maro_release.asset.size == 420352,
+        "failed parsing preserves the last valid release");
+
+    const std::atomic_bool maro_cancelled{true};
+    state.Expect(
+        maro_CheckForUpdate({1, 2, 2}, &maro_cancelled).status == Maro_UpdateCheckStatus::Cancelled,
+        "cancelled update check returns without a network request");
+    state.Expect(
+        maro_DownloadAndLaunchUpdate(maro_release, &maro_cancelled).status == Maro_UpdateInstallStatus::Cancelled,
+        "cancelled update does not download or launch an installer");
+}
+
+void maro_TestOptionalUpdateCheck(Maro_TestState& state)
+{
+    wchar_t maro_enabled[2]{};
+    if (GetEnvironmentVariableW(L"MARO_CLIVE_TEST_UPDATE", maro_enabled, 2) != 1 || maro_enabled[0] != L'1')
+    {
+        std::cout << "[SKIP] GitHub live update check\n";
+        return;
+    }
+    const auto maro_result = maro_CheckForUpdate({0, 0, 0});
+    state.Expect(maro_result.status == Maro_UpdateCheckStatus::Available, "GitHub reports a newer published version");
+    if (maro_result.status != Maro_UpdateCheckStatus::Available)
+    {
+        std::cerr << "[INFO] GitHub update check: " << Maro_WideToUtf8(maro_result.error) << '\n';
+        return;
+    }
+    state.Expect(
+        maro_CheckForUpdate(maro_result.release.version).status == Maro_UpdateCheckStatus::Current,
+        "the published version is reported as current");
+    std::cout << "[INFO] GitHub latest release: " << maro_result.release.tag << '\n';
+    std::uint64_t maro_downloaded = 0;
+    const auto maro_download = maro_DownloadUpdate(maro_result.release, nullptr,
+        [&maro_downloaded](std::uint64_t received, std::uint64_t) { maro_downloaded = received; });
+    state.Expect(maro_download.status == Maro_UpdateInstallStatus::Downloaded,
+        "published installer downloads and passes SHA-256 verification");
+    if (maro_download.status != Maro_UpdateInstallStatus::Downloaded)
+    {
+        std::cerr << "[INFO] Download: " << Maro_WideToUtf8(maro_download.error) << '\n';
+        return;
+    }
+    const std::filesystem::path maro_path(maro_download.installerPath);
+    state.Expect(std::filesystem::file_size(maro_path) == maro_result.release.asset.size,
+        "verified installer size matches release metadata");
+    state.Expect(maro_downloaded == maro_result.release.asset.size,
+        "download progress reaches the complete asset size");
+    state.Expect(std::filesystem::remove(maro_path), "download test removes its installer");
+    state.Expect(std::filesystem::remove(maro_path.parent_path()), "download test removes its empty directory");
+    auto maro_invalid = maro_result.release;
+    maro_invalid.asset.sha256[0] ^= 0xff;
+    const auto maro_corrupt = maro_DownloadUpdate(maro_invalid);
+    state.Expect(maro_corrupt.status == Maro_UpdateInstallStatus::Failed && maro_corrupt.installerPath.empty(),
+        "hash mismatch rejects and removes the downloaded installer");
+    std::atomic_bool maro_cancel{false};
+    const auto maro_cancelled = maro_DownloadUpdate(maro_result.release, &maro_cancel,
+        [&maro_cancel](std::uint64_t, std::uint64_t) { maro_cancel.store(true); });
+    state.Expect(maro_cancelled.status == Maro_UpdateInstallStatus::Cancelled && maro_cancelled.installerPath.empty(),
+        "in-progress cancellation removes the partial installer");
+}
 }
 
 int main()
@@ -663,6 +811,8 @@ int main()
         Maro_TestEngineCpp20Success(state);
         Maro_TestVisualStudioLanguageDetection(state);
         Maro_TestOptionalVisualStudioRead(state);
+        maro_TestUpdates(state);
+        maro_TestOptionalUpdateCheck(state);
     }
     catch (const std::exception& error)
     {

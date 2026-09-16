@@ -72,7 +72,7 @@
       <GenerateDebugInformation>true</GenerateDebugInformation>
       <ModuleDefinitionFile>$(ProjectDir)maro_CLive_Maro_Extension.def</ModuleDefinitionFile>
       <AdditionalLibraryDirectories>$(MaroVssdkRoot)\Common\Lib\x64;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
-      <AdditionalDependencies>vsguids.lib;user32.lib;shell32.lib;ole32.lib;oleaut32.lib;advapi32.lib;userenv.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>vsguids.lib;user32.lib;shell32.lib;ole32.lib;oleaut32.lib;advapi32.lib;userenv.lib;winhttp.lib;bcrypt.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
     <ResourceCompile>
       <PreprocessorDefinitions>MARO_DEBUG_BUILD;%(PreprocessorDefinitions)</PreprocessorDefinitions>
@@ -101,7 +101,7 @@
       <GenerateDebugInformation>true</GenerateDebugInformation>
       <ModuleDefinitionFile>$(ProjectDir)maro_CLive_Maro_Extension.def</ModuleDefinitionFile>
       <AdditionalLibraryDirectories>$(MaroVssdkRoot)\Common\Lib\x64;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
-      <AdditionalDependencies>vsguids.lib;user32.lib;shell32.lib;ole32.lib;oleaut32.lib;advapi32.lib;userenv.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>vsguids.lib;user32.lib;shell32.lib;ole32.lib;oleaut32.lib;advapi32.lib;userenv.lib;winhttp.lib;bcrypt.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
@@ -112,6 +112,7 @@
     <ClCompile Include="maro_Analyzer.cpp" />
     <ClCompile Include="maro_Engine.cpp" />
     <ClCompile Include="maro_VisualStudio.cpp" />
+    <ClCompile Include="maro_Update.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ResourceCompile Include="maro_CLive_Maro_Resources.rc" />
@@ -124,6 +125,7 @@
     <ClInclude Include="maro_Analyzer.hpp" />
     <ClInclude Include="maro_Engine.hpp" />
     <ClInclude Include="maro_VisualStudio.hpp" />
+    <ClInclude Include="maro_Update.hpp" />
   </ItemGroup>
   <ItemGroup>
     <None Include="maro_CLive_Maro_Extension.def" />

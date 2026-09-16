@@ -12,8 +12,10 @@
 #include <cstdint>
 #include <atomic>
 #include <memory>
+#include <mutex>
 #include <string>
 #include <string_view>
+#include <thread>
 
 extern const CLSID Maro_CLive_Maro_PackageClsid;
 extern const GUID Maro_CLive_Maro_CommandSet;
@@ -35,7 +37,7 @@ class ATL_NO_VTABLE Maro_CLive_Maro_Package
 {
 public:
     Maro_CLive_Maro_Package() = default;
-    ~Maro_CLive_Maro_Package() = default;
+    ~Maro_CLive_Maro_Package() { Shutdown(); }
 
     DECLARE_NO_REGISTRY()
     DECLARE_NOT_AGGREGATABLE(Maro_CLive_Maro_Package)
@@ -93,7 +95,10 @@ private:
     HRESULT BindActiveBuffer();
     HRESULT ReadActiveSource(Maro_SourceRequest& request, std::wstring& displayPath);
     HRESULT StartAnalysis(bool execute);
-    HRESULT OpenUpdatePage();
+    HRESULT StartUpdate();
+    void RunUpdate() noexcept;
+    void QueueUpdateMessage(std::wstring text);
+    static void CALLBACK UpdateTimerProc(HWND window, UINT message, UINT_PTR timer, DWORD time) noexcept;
     void ScheduleLiveAnalysis() noexcept;
     void RunLiveAnalysis() noexcept;
     void PublishDiagnosticResult(const Maro_ResultEnvelope& result) noexcept;
@@ -117,5 +122,11 @@ private:
     std::uint64_t lastLiveHash_ = 0;
     std::wstring lastLivePath_;
     std::atomic<std::uint64_t> runDiagnosticVersion_{0};
+    std::atomic_bool updateRunning_{false};
+    std::atomic_bool updateCancelled_{false};
+    std::thread updateThread_;
+    std::mutex updateMutex_;
+    std::wstring updateMessage_;
+    UINT_PTR updateTimer_ = 0;
     inline static Maro_CLive_Maro_Package* liveInstance_ = nullptr;
 };

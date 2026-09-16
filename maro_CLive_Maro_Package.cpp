@@ -1,9 +1,9 @@
 #include "maro_CLive_Maro_Package.hpp"
 #include "maro_Text.hpp"
 #include "maro_VisualStudio.hpp"
+#include "maro_Update.hpp"
 
 #include <new>
-#include <shellapi.h>
 #include <sstream>
 #include <utility>
 
@@ -159,6 +159,10 @@ STDMETHODIMP Maro_CLive_Maro_Package::QueryStatus(
             commands[index].cmdID == Maro_CLive_Maro_CommandUpdate)
         {
             commands[index].cmdf = OLECMDF_SUPPORTED | OLECMDF_ENABLED;
+            if (commands[index].cmdID == Maro_CLive_Maro_CommandUpdate && updateRunning_.load())
+            {
+                commands[index].cmdf = OLECMDF_SUPPORTED;
+            }
             handled = true;
         }
     }
@@ -191,7 +195,7 @@ STDMETHODIMP Maro_CLive_Maro_Package::Exec(
     }
     if (commandId == Maro_CLive_Maro_CommandUpdate)
     {
-        return OpenUpdatePage();
+        return StartUpdate();
     }
     return OLECMDERR_E_NOTSUPPORTED;
 }
@@ -582,21 +586,108 @@ HRESULT Maro_CLive_Maro_Package::StartAnalysis(bool execute)
     }
 }
 
-HRESULT Maro_CLive_Maro_Package::OpenUpdatePage()
+HRESULT Maro_CLive_Maro_Package::StartUpdate()
 {
-    const bool opened = reinterpret_cast<INT_PTR>(ShellExecuteW(
-        nullptr,
-        L"open",
-        L"https://github.com/maro-comu/Maro_CLive/releases/latest",
-        nullptr,
-        nullptr,
-        SW_SHOWNORMAL)) > 32;
-    WriteDiagnostic(opened ? L"업데이트 페이지를 열었습니다.\r\n" : L"업데이트 페이지를 열지 못했습니다.\r\n");
-    if (diagnosticPane_ != nullptr)
+    if (updateRunning_.exchange(true))
     {
-        diagnosticPane_->Activate();
+        return S_OK;
     }
-    return S_OK;
+    try
+    {
+        if (updateThread_.joinable())
+        {
+            updateThread_.join();
+        }
+        updateCancelled_.store(false);
+        updateTimer_ = SetTimer(nullptr, updateTimer_, 100, UpdateTimerProc);
+        if (updateTimer_ == 0)
+        {
+            updateRunning_.store(false);
+            return E_FAIL;
+        }
+        diagnosticPane_->Activate();
+        WriteDiagnostic(L"\r\n업데이트 확인 중...\r\n");
+        updateThread_ = std::thread([this] { RunUpdate(); });
+        return S_OK;
+    }
+    catch (...)
+    {
+        updateRunning_.store(false);
+        WriteDiagnostic(L"업데이트를 시작하지 못했습니다.\r\n");
+        return E_FAIL;
+    }
+}
+
+void Maro_CLive_Maro_Package::QueueUpdateMessage(std::wstring text)
+{
+    std::lock_guard lock(updateMutex_);
+    updateMessage_.append(text);
+}
+
+void CALLBACK Maro_CLive_Maro_Package::UpdateTimerProc(HWND, UINT, UINT_PTR timer, DWORD) noexcept
+{
+    auto* instance = liveInstance_;
+    if (instance == nullptr || timer != instance->updateTimer_)
+    {
+        return;
+    }
+    try
+    {
+        const bool completed = !instance->updateRunning_.load();
+        std::wstring text;
+        {
+            std::lock_guard lock(instance->updateMutex_);
+            text.swap(instance->updateMessage_);
+        }
+        instance->WriteDiagnostic(text);
+        if (completed)
+        {
+            KillTimer(nullptr, timer);
+            instance->updateTimer_ = 0;
+        }
+    }
+    catch (...)
+    {
+    }
+}
+
+void Maro_CLive_Maro_Package::RunUpdate() noexcept
+{
+    const HRESULT initialized = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+    try
+    {
+        const auto check = maro_CheckForUpdate({1, 2, 2}, &updateCancelled_);
+        if (check.status == Maro_UpdateCheckStatus::Current)
+        {
+            QueueUpdateMessage(L"최신 버전입니다. (v1.2.2)\r\n");
+        }
+        else if (check.status == Maro_UpdateCheckStatus::Failed)
+        {
+            QueueUpdateMessage(check.error + L"\r\n");
+        }
+        else if (check.status == Maro_UpdateCheckStatus::Available)
+        {
+            QueueUpdateMessage(Maro_Utf8ToWide(check.release.tag) + L" 다운로드 중...\r\n");
+            const auto install = maro_DownloadAndLaunchUpdate(check.release, &updateCancelled_);
+            if (install.status == Maro_UpdateInstallStatus::Launched)
+            {
+                QueueUpdateMessage(L"설치를 시작했습니다. 작업을 저장하고 Visual Studio를 닫아 업데이트를 완료하세요.\r\n");
+            }
+            else if (install.status == Maro_UpdateInstallStatus::Failed)
+            {
+                QueueUpdateMessage(install.error + L"\r\n");
+            }
+        }
+    }
+    catch (...)
+    {
+        try { QueueUpdateMessage(L"업데이트 중 오류가 발생했습니다.\r\n"); } catch (...) {}
+    }
+    if (SUCCEEDED(initialized))
+    {
+        CoUninitialize();
+    }
+    updateRunning_.store(false);
 }
 
 void Maro_CLive_Maro_Package::PublishDiagnosticResult(const Maro_ResultEnvelope& result) noexcept
@@ -699,6 +790,17 @@ void Maro_CLive_Maro_Package::WriteRun(std::wstring_view text) noexcept
 
 void Maro_CLive_Maro_Package::Shutdown() noexcept
 {
+    if (updateTimer_ != 0)
+    {
+        KillTimer(nullptr, updateTimer_);
+        updateTimer_ = 0;
+    }
+    updateCancelled_.store(true, std::memory_order_release);
+    if (updateThread_.joinable())
+    {
+        updateThread_.join();
+    }
+    updateRunning_.store(false, std::memory_order_release);
     if (liveTimer_ != 0)
     {
         KillTimer(nullptr, liveTimer_);
