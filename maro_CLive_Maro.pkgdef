@@ -3,7 +3,7 @@
 "InprocServer32"="$PackageFolder$\maro_CLive_Maro.dll"
 "CompanyName"="Maro"
 "ProductName"="CLive_Maro"
-"ProductVersion"="1.2.3"
+"ProductVersion"="1.2.4"
 "MinEdition"="Community"
 "ID"=dword:00000001
 "AllowsBackgroundLoad"=dword:00000001

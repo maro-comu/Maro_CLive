@@ -383,7 +383,43 @@ std::wstring Maro_FriendlyMessage(std::wstring_view original)
     {
         return L"컴파일은 진행됐지만 실행 파일을 연결하지 못했습니다.";
     }
-    return L"컴파일러가 이 위치에서 문제를 보고했습니다.";
+    return {};
+}
+
+std::wstring maro_NormalizeDiagnosticPath(std::wstring_view maro_path)
+{
+    while (!maro_path.empty() && std::iswspace(maro_path.front()))
+    {
+        maro_path.remove_prefix(1);
+    }
+    while (!maro_path.empty() && std::iswspace(maro_path.back()))
+    {
+        maro_path.remove_suffix(1);
+    }
+    if (maro_path.size() >= 2 && maro_path.front() == L'"' && maro_path.back() == L'"')
+    {
+        maro_path.remove_prefix(1);
+        maro_path.remove_suffix(1);
+    }
+    std::wstring maro_normalized(maro_path);
+    std::replace(maro_normalized.begin(), maro_normalized.end(), L'/', L'\\');
+    return Maro_Lower(fs::path(maro_normalized).lexically_normal().wstring());
+}
+
+bool maro_IsSnapshotDiagnostic(std::wstring_view maro_path, std::wstring_view maro_generatedSourcePath,
+    Maro_Language maro_language)
+{
+    const std::wstring maro_normalized = maro_NormalizeDiagnosticPath(maro_path);
+    const std::wstring maro_snapshot = maro_NormalizeDiagnosticPath(maro_generatedSourcePath);
+    if (!maro_snapshot.empty() && maro_normalized == maro_snapshot)
+    {
+        return true;
+    }
+    const fs::path maro_reported(maro_normalized);
+    const std::wstring maro_name = maro_snapshot.empty()
+        ? (maro_language == Maro_Language::C17 ? L"maro_usersource.c" : L"maro_usersource.cpp")
+        : fs::path(maro_snapshot).filename().wstring();
+    return !maro_reported.has_parent_path() && maro_reported.filename() == maro_name;
 }
 
 std::wstring Maro_UnescapeFixIt(std::wstring_view escaped)
@@ -720,7 +756,8 @@ Maro_AnalysisResult Maro_RunCompiler(
         request,
         generated,
         toolchain.name,
-        toolchain.version);
+        toolchain.version,
+        sourcePath.wstring());
     result.cancelled = process.termination == Maro_ProcessTermination::Cancelled;
     result.timedOut = process.termination == Maro_ProcessTermination::WallTimedOut ||
         process.termination == Maro_ProcessTermination::CpuTimedOut;
@@ -967,7 +1004,8 @@ std::vector<Maro_Diagnostic> Maro_ParseCompilerDiagnostics(
     const Maro_SourceRequest& request,
     const Maro_GeneratedSource& generated,
     std::wstring_view analyzerName,
-    std::wstring_view analyzerVersion)
+    std::wstring_view analyzerVersion,
+    std::wstring_view maro_generatedSourcePath)
 {
     const std::wregex locatedMsvc(
         LR"Maro(^(.*)\(([0-9]+)(?:,([0-9]+))?\)\s*:\s*(fatal error|error|warning|note|remark)(?:\s+([A-Za-z]+[0-9]+))?\s*:\s*(.*)$)Maro",
@@ -979,7 +1017,8 @@ std::vector<Maro_Diagnostic> Maro_ParseCompilerDiagnostics(
         LR"Maro(^.*:\s*(fatal error|error|warning|note)(?:\s+([A-Za-z]+[0-9]+))?\s*:\s*(.*)$)Maro",
         std::regex::icase);
     const std::wregex fixIt(
-        LR"Maro(^fix-it:".*":\{([0-9]+):([0-9]+)-([0-9]+):([0-9]+)\}:"(.*)"$)Maro");
+        LR"Maro(^fix-it:"(.*)":\{([0-9]+):([0-9]+)-([0-9]+):([0-9]+)\}:"(.*)"$)Maro");
+    const std::wregex maro_warningCode(LR"Maro(\[(-W[^\]]+)\]\s*$)Maro");
 
     std::vector<Maro_Diagnostic> diagnostics;
     std::wistringstream stream{std::wstring(compilerOutput)};
@@ -994,12 +1033,16 @@ std::vector<Maro_Diagnostic> Maro_ParseCompilerDiagnostics(
         std::wsmatch match;
         if (std::regex_match(line, match, fixIt) && !diagnostics.empty())
         {
+            if (!maro_IsSnapshotDiagnostic(match[1].str(), maro_generatedSourcePath, request.language))
+            {
+                continue;
+            }
             Maro_SourcePosition generatedStart{
-                static_cast<std::size_t>(std::stoull(match[1].str())),
-                static_cast<std::size_t>(std::stoull(match[2].str()))};
+                static_cast<std::size_t>(std::stoull(match[2].str())),
+                static_cast<std::size_t>(std::stoull(match[3].str()))};
             Maro_SourcePosition generatedEnd{
-                static_cast<std::size_t>(std::stoull(match[3].str())),
-                static_cast<std::size_t>(std::stoull(match[4].str()))};
+                static_cast<std::size_t>(std::stoull(match[4].str())),
+                static_cast<std::size_t>(std::stoull(match[5].str()))};
             bool startGenerated = false;
             bool endGenerated = false;
             const Maro_SourcePosition start = Maro_MapGeneratedPosition(generated, generatedStart, startGenerated);
@@ -1014,7 +1057,7 @@ std::vector<Maro_Diagnostic> Maro_ParseCompilerDiagnostics(
                 edit.sourceVersion = request.sourceVersion;
                 edit.startOffsetUtf16 = startOffset;
                 edit.lengthUtf16 = endOffset >= startOffset ? endOffset - startOffset : 0;
-                edit.replacement = Maro_UnescapeFixIt(match[5].str());
+                edit.replacement = Maro_UnescapeFixIt(match[6].str());
                 if (startOffset <= request.sourceText.size() &&
                     edit.lengthUtf16 <= request.sourceText.size() - startOffset)
                 {
@@ -1033,9 +1076,11 @@ std::vector<Maro_Diagnostic> Maro_ParseCompilerDiagnostics(
         std::wstring severityText;
         std::wstring codeText;
         std::wstring message;
+        std::wstring maro_reportedPath;
         bool matched = false;
         if (std::regex_match(line, match, locatedMsvc))
         {
+            maro_reportedPath = match[1].str();
             generatedPosition.line = static_cast<std::size_t>(std::stoull(match[2].str()));
             generatedPosition.column = match[3].matched
                 ? static_cast<std::size_t>(std::stoull(match[3].str()))
@@ -1047,6 +1092,7 @@ std::vector<Maro_Diagnostic> Maro_ParseCompilerDiagnostics(
         }
         else if (std::regex_match(line, match, locatedClang))
         {
+            maro_reportedPath = match[1].str();
             generatedPosition.line = static_cast<std::size_t>(std::stoull(match[2].str()));
             generatedPosition.column = static_cast<std::size_t>(std::stoull(match[3].str()));
             severityText = match[4].str();
@@ -1074,18 +1120,35 @@ std::vector<Maro_Diagnostic> Maro_ParseCompilerDiagnostics(
         diagnostic.severity = Maro_ParseSeverity(severityText);
         diagnostic.evidence = Maro_Evidence::StaticAnalysis;
         diagnostic.originalDiagnostic = line;
+        if (codeText.empty() && std::regex_search(message, match, maro_warningCode))
+        {
+            codeText = match[1].str();
+        }
         diagnostic.code = codeText.empty()
             ? Maro_DiagnosticCode(message, diagnostic.severity, request.language)
-            : Maro_DiagnosticCode(codeText + L" " + message, diagnostic.severity, request.language);
+            : codeText;
         diagnostic.friendlyMessage = Maro_FriendlyMessage(codeText + L" " + message);
+        if (!diagnostic.friendlyMessage.empty())
+        {
+            diagnostic.friendlyMessage += L"\r\n";
+        }
+        diagnostic.friendlyMessage += message;
+        diagnostic.sourcePath = maro_reportedPath;
         if (generatedPosition.line != 0)
         {
-            bool generatedOnly = false;
-            const Maro_SourcePosition mapped = Maro_MapGeneratedPosition(
-                generated, generatedPosition, generatedOnly);
+            bool generatedOnly = true;
+            const bool maro_snapshot = maro_IsSnapshotDiagnostic(
+                maro_reportedPath, maro_generatedSourcePath, request.language);
+            const Maro_SourcePosition mapped = maro_snapshot
+                ? Maro_MapGeneratedPosition(generated, generatedPosition, generatedOnly)
+                : generatedPosition;
             diagnostic.range.start = mapped;
             diagnostic.range.end = mapped;
             diagnostic.range.generated = generatedOnly;
+            if (!generatedOnly)
+            {
+                diagnostic.sourcePath = request.sourcePath;
+            }
         }
         diagnostics.push_back(std::move(diagnostic));
     }

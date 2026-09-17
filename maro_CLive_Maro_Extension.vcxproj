@@ -136,6 +136,11 @@
     <None Include="maro_CLive_Maro.vsixmanifest" />
     <None Include="maro_CLive_Maro.vsct" />
   </ItemGroup>
+  <ItemDefinitionGroup>
+    <Link>
+      <AdditionalDependencies>comctl32.lib;%(AdditionalDependencies)</AdditionalDependencies>
+    </Link>
+  </ItemDefinitionGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <Target Name="Maro_CompileCommandTable"
           BeforeTargets="ResourceCompile"

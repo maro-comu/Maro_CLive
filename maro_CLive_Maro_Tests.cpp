@@ -344,6 +344,66 @@ void Maro_TestSourceGenerationAndMapping(Maro_TestState& state)
         "an empty snippet retains a source-map entry for its blank line");
 }
 
+void maro_TestCompilerDiagnostics(Maro_TestState& maro_state)
+{
+    Maro_SourceRequest maro_request;
+    maro_request.sourceVersion = 19;
+    maro_request.sourcePath = L"C:\\project\\maro_main.cpp";
+    maro_request.sourceText = L"int maro_value = maro_missing;";
+    maro_request.language = Maro_Language::Cpp20;
+    maro_request.mode = Maro_SourceMode::Snippet;
+    const auto maro_generated = maro_BuildGeneratedSource(maro_request);
+    const std::wstring maro_snapshot = L"C:\\Temp\\maro_UserSource.cpp";
+    const auto maro_msvc = Maro_ParseCompilerDiagnostics(
+        L"C:/TEMP/maro_UserSource.cpp(3,18): error C2065: 'maro_missing': undeclared identifier\r\n"
+        L"C:\\sdk\\vector(2361,7): error C2672: 'begin': no matching overloaded function found\r\n"
+        L"C:\\headers\\maro_UserSource.cpp(3,1): error C2143: syntax error: missing ';'\r\n"
+        L"LINK : fatal error LNK1120: 1 unresolved externals\r\n",
+        maro_request, maro_generated, L"MSVC", L"test", maro_snapshot);
+    maro_state.Expect(maro_msvc.size() == 4, "compiler parser retains located and linker diagnostics");
+    if (maro_msvc.size() == 4)
+    {
+        maro_state.Expect(maro_msvc[0].code == L"C2065", "native MSVC error codes are preserved");
+        maro_state.Expect(maro_msvc[0].range.start.line == 1 && !maro_msvc[0].range.generated,
+            "snapshot diagnostic maps through snippet wrapper to the actual user line");
+        maro_state.Expect(maro_msvc[0].sourcePath == maro_request.sourcePath,
+            "mapped diagnostic identifies the user source instead of the temporary snapshot");
+        maro_state.Expect(maro_msvc[0].friendlyMessage.find(L"maro_missing") != std::wstring::npos,
+            "friendly compiler diagnostics preserve the actual failing identifier");
+        maro_state.Expect(maro_msvc[1].sourcePath == L"C:\\sdk\\vector" &&
+                maro_msvc[1].range.start.line == 2361 && maro_msvc[1].range.generated,
+            "standard-library diagnostics retain their own path and line without claiming user location");
+        maro_state.Expect(maro_msvc[1].friendlyMessage.find(L"no matching overloaded function") != std::wstring::npos,
+            "unknown diagnostic families retain the specific compiler explanation");
+        maro_state.Expect(maro_msvc[2].range.start.line == 3 && maro_msvc[2].range.generated,
+            "a header with the snapshot basename is not remapped to user source");
+        maro_state.Expect(maro_msvc[3].code == L"LNK1120" && maro_msvc[3].range.start.line == 0 &&
+                maro_msvc[3].severity == Maro_Severity::Fatal,
+            "unlocated linker diagnostics preserve their native code and severity");
+    }
+    const auto maro_clang = Maro_ParseCompilerDiagnostics(
+        L"C:\\Temp\\maro_UserSource.cpp:3:5: warning: unused variable 'maro_value' [-Wunused-variable]\n"
+        L"fix-it:\"C:\\sdk\\vector\":{3:5-3:15}:\"other\"\n"
+        L"fix-it:\"C:\\Temp\\maro_UserSource.cpp\":{3:5-3:15}:\"maro_replaced\"\n"
+        L"maro_UserSource.cpp(3,18): error: expected ';' after expression\n",
+        maro_request, maro_generated, L"Clang", L"test", maro_snapshot);
+    maro_state.Expect(maro_clang.size() == 2, "Clang and MSVC-style Clang diagnostics are parsed together");
+    if (maro_clang.size() == 2)
+    {
+        maro_state.Expect(maro_clang[0].code == L"-Wunused-variable",
+            "Clang warning-option codes are preserved");
+        maro_state.Expect(maro_clang[0].fix && maro_clang[0].fix->edits.size() == 1 &&
+                maro_clang[0].fix->edits[0].replacement == L"maro_replaced" &&
+                maro_clang[0].fix->edits[0].startOffsetUtf16 == 4,
+            "only snapshot fix-its can modify the current user buffer");
+        maro_state.Expect(maro_clang[1].code == L"CPP-SYN-1001" &&
+                maro_clang[1].range.start.line == 1 && !maro_clang[1].range.generated,
+            "code-less compiler errors retain a stable fallback code and valid user location");
+        maro_state.Expect(maro_clang[1].originalDiagnostic.find(L"expected ';'") != std::wstring::npos,
+            "compiler diagnostic original text remains available verbatim");
+    }
+}
+
 void maro_TestOutputQueue(Maro_TestState& maro_state)
 {
     maro_OutputQueue maro_queue(8);
@@ -918,6 +978,7 @@ void maro_TestOptionalUpdateCheck(Maro_TestState& state)
 }
 
 bool maro_TestDiagnosticWindow();
+bool maro_TestDeferredCommands();
 
 int main()
 {
@@ -925,6 +986,7 @@ int main()
 
     try
     {
+        state.Expect(maro_TestDeferredCommands(), "400 menu commands return without querying UI services or starting work");
         state.Expect(maro_TestDiagnosticWindow(), "diagnostic pane renders split read-only views, findings, resize and reopen");
         Maro_TestUtfConversions(state);
         Maro_TestTextCoordinates(state);
@@ -932,6 +994,7 @@ int main()
         Maro_TestCommandLineQuoting(state);
         Maro_TestMainDetection(state);
         Maro_TestSourceGenerationAndMapping(state);
+        maro_TestCompilerDiagnostics(state);
         maro_TestOutputQueue(state);
         maro_TestEngineLifecycle(state);
         Maro_TestEngineSuccess(state);

@@ -208,6 +208,29 @@ void Maro_CLive_Maro_Package::ProcessUi() noexcept
         }
         if (initialized_ && !shuttingDown_)
         {
+            const DWORD maro_commands = maro_pendingCommands_.exchange(0);
+            HRESULT maro_commandResult = S_OK;
+            if ((maro_commands & 3) != 0 && !shuttingDown_)
+            {
+                maro_commandResult = StartAnalysis((maro_commands & 2) != 0);
+            }
+            if ((maro_commands & 8) != 0 && !shuttingDown_)
+            {
+                maro_commandResult = EnsureDiagnosticWindow(true);
+            }
+            if ((maro_commands & 4) != 0 && !shuttingDown_)
+            {
+                maro_commandResult = StartUpdate();
+            }
+            if (shuttingDown_)
+            {
+                uiBusy_ = false;
+                return;
+            }
+            if (FAILED(maro_commandResult))
+            {
+                updateNotice_.Push(L"요청을 처리하지 못했습니다. 다시 시도해 주세요.");
+            }
             if (liveDeadline_ != 0 && GetTickCount64() >= liveDeadline_)
             {
                 liveDeadline_ = 0;
@@ -236,6 +259,10 @@ void Maro_CLive_Maro_Package::ProcessUi() noexcept
             }
             if (!shuttingDown_)
             {
+                if (diagnosticWindow_ != nullptr)
+                {
+                    diagnosticWindow_->maro_AppendOutput(output);
+                }
                 maro_WritePane(runPane_, output);
             }
         }
@@ -246,7 +273,7 @@ void Maro_CLive_Maro_Package::ProcessUi() noexcept
     uiBusy_ = false;
 }
 
-HRESULT Maro_CLive_Maro_Package::EnsureDiagnosticWindow(bool activate)
+HRESULT Maro_CLive_Maro_Package::EnsureDiagnosticWindow(bool activate, bool show)
 {
     if (shuttingDown_ || serviceProvider_ == nullptr || creatingWindow_)
     {
@@ -285,7 +312,7 @@ HRESULT Maro_CLive_Maro_Package::EnsureDiagnosticWindow(bool activate)
     {
         return E_FAIL;
     }
-    return activate ? diagnosticFrame_->Show() : diagnosticFrame_->ShowNoActivate();
+    return !show ? S_OK : activate ? diagnosticFrame_->Show() : diagnosticFrame_->ShowNoActivate();
 }
 
 void Maro_CLive_Maro_Package::SetDiagnosticPending(const std::wstring& path, const wchar_t* status)
@@ -325,7 +352,22 @@ STDMETHODIMP Maro_CLive_Maro_Package::GetAutomationObject(LPCOLESTR, IDispatch**
 
 STDMETHODIMP Maro_CLive_Maro_Package::CreateTool(REFGUID slot)
 {
-    return slot == maro_DiagnosticWindowGuid ? EnsureDiagnosticWindow(false) : E_NOTIMPL;
+    if (slot != maro_DiagnosticWindowGuid)
+    {
+        return E_NOTIMPL;
+    }
+    const bool maro_wasBusy = std::exchange(uiBusy_, true);
+    HRESULT maro_result = E_FAIL;
+    try
+    {
+        maro_result = EnsureDiagnosticWindow(false, false);
+    }
+    catch (...)
+    {
+        creatingWindow_ = false;
+    }
+    uiBusy_ = maro_wasBusy;
+    return maro_result;
 }
 
 STDMETHODIMP Maro_CLive_Maro_Package::ResetDefaults(PKGRESETFLAGS)
@@ -366,7 +408,8 @@ STDMETHODIMP Maro_CLive_Maro_Package::QueryStatus(
             commands[index].cmdID == maro_CommandDiagnostics)
         {
             commands[index].cmdf = OLECMDF_SUPPORTED | OLECMDF_ENABLED;
-            if (commands[index].cmdID == Maro_CLive_Maro_CommandUpdate && updateRunning_.load())
+            if (commands[index].cmdID == Maro_CLive_Maro_CommandUpdate &&
+                (updateRunning_.load() || (maro_pendingCommands_.load() & 4) != 0))
             {
                 commands[index].cmdf = OLECMDF_SUPPORTED;
             }
@@ -392,28 +435,20 @@ STDMETHODIMP Maro_CLive_Maro_Package::Exec(
         return OLECMDERR_E_UNKNOWNGROUP;
     }
 
-    const HRESULT initialized = InitializeUi();
-    if (FAILED(initialized))
+    if (commandId < Maro_CLive_Maro_CommandAnalyze || commandId > maro_CommandDiagnostics)
     {
-        return initialized;
+        return OLECMDERR_E_NOTSUPPORTED;
     }
-    if (commandId == Maro_CLive_Maro_CommandAnalyze)
+    if (shuttingDown_ || serviceProvider_ == nullptr || uiTimer_ == 0)
     {
-        return StartAnalysis(false);
+        return E_UNEXPECTED;
     }
-    if (commandId == Maro_CLive_Maro_CommandRun)
+    if (FAILED(initializationResult_) && initializationResult_ != E_PENDING)
     {
-        return StartAnalysis(true);
+        return initializationResult_;
     }
-    if (commandId == Maro_CLive_Maro_CommandUpdate)
-    {
-        return StartUpdate();
-    }
-    if (commandId == maro_CommandDiagnostics)
-    {
-        return EnsureDiagnosticWindow(true);
-    }
-    return OLECMDERR_E_NOTSUPPORTED;
+    maro_pendingCommands_.fetch_or(DWORD{1} << (commandId - Maro_CLive_Maro_CommandAnalyze));
+    return S_OK;
 }
 
 void STDMETHODCALLTYPE Maro_CLive_Maro_Package::OnChangeLineText(const TextLineChange*, BOOL last)
@@ -520,28 +555,8 @@ HRESULT Maro_CLive_Maro_Package::StartLiveTracking()
 
 HRESULT Maro_CLive_Maro_Package::BindActiveBuffer()
 {
-    if (serviceProvider_ == nullptr)
-    {
-        return E_UNEXPECTED;
-    }
-
-    ATL::CComPtr<IVsTextManager> textManager;
-    HRESULT result = serviceProvider_->QueryService(
-        SID_SVsTextManager,
-        IID_IVsTextManager,
-        reinterpret_cast<void**>(&textManager));
-    if (FAILED(result) || textManager == nullptr)
-    {
-        return FAILED(result) ? result : E_NOINTERFACE;
-    }
-
-    ATL::CComPtr<IVsTextView> view;
-    result = textManager->GetActiveView(FALSE, nullptr, &view);
     ATL::CComPtr<IVsTextLines> lines;
-    if (SUCCEEDED(result) && view != nullptr)
-    {
-        result = view->GetBuffer(&lines);
-    }
+    HRESULT result = maro_GetDocumentLines(&lines);
     std::wstring path;
     if (FAILED(result) || !maro_ReadSourcePath(lines, path))
     {
@@ -631,13 +646,40 @@ void Maro_CLive_Maro_Package::RunLiveAnalysis() noexcept
     }
 }
 
-HRESULT Maro_CLive_Maro_Package::ReadActiveSource(
-    Maro_SourceRequest& request,
-    std::wstring& displayPath)
+HRESULT Maro_CLive_Maro_Package::maro_GetDocumentLines(IVsTextLines** maro_lines)
 {
+    if (maro_lines == nullptr)
+    {
+        return E_POINTER;
+    }
+    *maro_lines = nullptr;
     if (serviceProvider_ == nullptr)
     {
         return E_UNEXPECTED;
+    }
+
+    if (selectionMonitor_ != nullptr)
+    {
+        ATL::CComVariant maro_value;
+        const HRESULT maro_selected = selectionMonitor_->GetCurrentElementValue(SEID_DocumentFrame, &maro_value);
+        if (SUCCEEDED(maro_selected))
+        {
+            ATL::CComQIPtr<IVsWindowFrame> maro_frame(maro_value.vt == VT_UNKNOWN ? maro_value.punkVal :
+                maro_value.vt == VT_DISPATCH ? maro_value.pdispVal : nullptr);
+            if (maro_frame == nullptr)
+            {
+                return E_FAIL;
+            }
+            ATL::CComVariant maro_data;
+            const HRESULT maro_result = maro_frame->GetProperty(VSFPROPID_DocData, &maro_data);
+            if (FAILED(maro_result))
+            {
+                return maro_result;
+            }
+            ATL::CComQIPtr<IVsTextLines> maro_buffer(maro_data.vt == VT_UNKNOWN ? maro_data.punkVal :
+                maro_data.vt == VT_DISPATCH ? maro_data.pdispVal : nullptr);
+            return maro_buffer != nullptr ? maro_buffer.CopyTo(maro_lines) : HRESULT_FROM_WIN32(ERROR_NOT_SUPPORTED);
+        }
     }
 
     ATL::CComPtr<IVsTextManager> textManager;
@@ -657,8 +699,15 @@ HRESULT Maro_CLive_Maro_Package::ReadActiveSource(
         return FAILED(result) ? result : E_FAIL;
     }
 
+    return view->GetBuffer(maro_lines);
+}
+
+HRESULT Maro_CLive_Maro_Package::ReadActiveSource(
+    Maro_SourceRequest& request,
+    std::wstring& displayPath)
+{
     ATL::CComPtr<IVsTextLines> lines;
-    result = view->GetBuffer(&lines);
+    HRESULT result = maro_GetDocumentLines(&lines);
     if (FAILED(result) || lines == nullptr)
     {
         return FAILED(result) ? result : E_FAIL;
@@ -727,7 +776,7 @@ HRESULT Maro_CLive_Maro_Package::StartAnalysis(bool execute)
         const HRESULT readResult = ReadActiveSource(request, displayPath);
         if (FAILED(readResult))
         {
-            EnsureDiagnosticWindow(true);
+            EnsureDiagnosticWindow(false);
             SetDiagnosticPending({}, L"C/C++ 문서를 열어 주세요.");
             diagnosticOutput_.Clear();
             diagnosticPane_->Clear();
@@ -749,9 +798,13 @@ HRESULT Maro_CLive_Maro_Package::StartAnalysis(bool execute)
             runOutput_.Clear();
             diagnosticPane_->Clear();
             runPane_->Clear();
-            runPane_->Activate();
+            EnsureDiagnosticWindow(false);
+            if (diagnosticWindow_ != nullptr)
+            {
+                diagnosticWindow_->maro_ClearOutput();
+            }
             WriteDiagnostic(L"CLive_Maro 실시간 진단 | " + displayPath + L"\r\n");
-            WriteRun(L"CLive_Maro 실행 출력 | " + displayPath + L"\r\n\r\n");
+            WriteRun(L"실행 중...\r\n");
         }
         else
         {
@@ -760,7 +813,7 @@ HRESULT Maro_CLive_Maro_Package::StartAnalysis(bool execute)
             lastLiveHash_ = Maro_HashSource(request.sourceText);
             diagnosticOutput_.Clear();
             diagnosticPane_->Clear();
-            EnsureDiagnosticWindow(true);
+            EnsureDiagnosticWindow(false);
             WriteDiagnostic(L"CLive_Maro 실시간 진단 | " + displayPath + L"\r\n검사 중...\r\n");
         }
 
@@ -802,7 +855,7 @@ HRESULT Maro_CLive_Maro_Package::StartUpdate()
             updateThread_.join();
         }
         updateCancelled_.store(false);
-        EnsureDiagnosticWindow(true);
+        EnsureDiagnosticWindow(false);
         updateNotice_.Push(L"업데이트 확인 중...");
         WriteDiagnostic(L"\r\n업데이트 확인 중...\r\n");
         updateThread_ = std::thread([this] { RunUpdate(); });
@@ -827,10 +880,10 @@ void Maro_CLive_Maro_Package::RunUpdate() noexcept
     const HRESULT initialized = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
     try
     {
-        const auto check = maro_CheckForUpdate({1, 2, 3}, &updateCancelled_);
+        const auto check = maro_CheckForUpdate({1, 2, 4}, &updateCancelled_);
         if (check.status == Maro_UpdateCheckStatus::Current)
         {
-            QueueUpdateMessage(L"최신 버전입니다. (v1.2.3)\r\n");
+            QueueUpdateMessage(L"최신 버전입니다. (v1.2.4)\r\n");
         }
         else if (check.status == Maro_UpdateCheckStatus::Failed)
         {
@@ -932,11 +985,6 @@ void Maro_CLive_Maro_Package::PublishRunResult(const Maro_ResultEnvelope& result
             {
                 WriteRun(L"[stderr] " + result.standardError);
             }
-            if (result.phase == Maro_Phase::Running && result.standardOutput.empty() &&
-                result.standardError.empty() && !result.statusText.empty())
-            {
-                WriteRun(L"> " + result.statusText + L"\r\n");
-            }
             return;
         }
         if (runDiagnosticVersion_.load(std::memory_order_acquire) == result.sourceVersion)
@@ -971,6 +1019,7 @@ void Maro_CLive_Maro_Package::Shutdown() noexcept
         uiTimer_ = 0;
     }
     liveDeadline_ = 0;
+    maro_pendingCommands_.store(0);
     updateCancelled_.store(true, std::memory_order_release);
     if (updateThread_.joinable())
     {

@@ -15,7 +15,7 @@
       <Button guid="guidMaroCommandSet" id="maro_CommandDiagnostics" priority="0x0090" type="Button">
         <Parent guid="guidMaroCommandSet" id="MaroCommandGroup" />
         <Strings>
-          <ButtonText>CLive_Maro 실시간 진단 창</ButtonText>
+          <ButtonText>CLive_Maro 출력 및 진단 창</ButtonText>
           <CommandName>CLive_Maro.Diagnostics</CommandName>
         </Strings>
       </Button>

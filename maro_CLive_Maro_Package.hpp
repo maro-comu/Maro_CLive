@@ -94,13 +94,14 @@ public:
 
 private:
     HRESULT InitializeUi();
-    HRESULT EnsureDiagnosticWindow(bool activate);
+    HRESULT EnsureDiagnosticWindow(bool activate, bool show = true);
     void SetDiagnosticPending(const std::wstring& path, const wchar_t* status);
     void ProcessUi() noexcept;
     static void CALLBACK UiTimerProc(HWND window, UINT message, UINT_PTR timer, DWORD time) noexcept;
     HRESULT EnsureOutputPanes();
     HRESULT StartLiveTracking();
     HRESULT BindActiveBuffer();
+    HRESULT maro_GetDocumentLines(IVsTextLines** maro_lines);
     HRESULT ReadActiveSource(Maro_SourceRequest& request, std::wstring& displayPath);
     HRESULT StartAnalysis(bool execute);
     HRESULT StartUpdate();
@@ -135,6 +136,7 @@ private:
     bool initialized_ = false;
     bool initializing_ = false;
     bool uiBusy_ = false;
+    std::atomic<DWORD> maro_pendingCommands_{0};
     bool shuttingDown_ = false;
     HRESULT initializationResult_ = E_PENDING;
     maro_OutputQueue diagnosticOutput_;

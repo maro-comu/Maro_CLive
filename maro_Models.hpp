@@ -99,6 +99,7 @@ struct Maro_Diagnostic
     Maro_Severity severity = Maro_Severity::Info;
     Maro_Evidence evidence = Maro_Evidence::StaticAnalysis;
     Maro_SourceRange range;
+    std::wstring sourcePath;
     std::wstring friendlyMessage;
     std::wstring originalDiagnostic;
     std::optional<Maro_FixSuggestion> fix;
