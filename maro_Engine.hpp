@@ -48,10 +48,10 @@ private:
     std::condition_variable_any condition_;
     std::optional<Maro_PendingWork> pending_;
     Maro_ExecutionLimits limits_;
-    std::jthread worker_;
     std::atomic<std::uint64_t> nextRequestId_{0};
     std::atomic<std::uint64_t> currentRequestId_{0};
     std::atomic<std::uint64_t> currentSourceVersion_{0};
     std::atomic<std::uint64_t> cancellationGeneration_{0};
     std::atomic<bool> shuttingDown_{false};
+    std::jthread worker_;
 };

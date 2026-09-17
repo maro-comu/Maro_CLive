@@ -43,7 +43,7 @@
   </ImportGroup>
   <PropertyGroup Label="UserMacros" />
   <PropertyGroup>
-    <TargetName>maro_CLive_Maro_v1.2.2</TargetName>
+    <TargetName>maro_CLive_Maro_v1.2.3</TargetName>
     <OutDir>$(ProjectDir)maro_Build\$(Platform)\$(Configuration)\</OutDir>
     <IntDir>$(ProjectDir)maro_Build\maro_Intermediate\maro_CLive_Maro\$(Platform)\$(Configuration)\</IntDir>
     <MaroVsixPath>$(ProjectDir)maro_Build\$(Platform)\$(Configuration)\maro_Package\maro_CLive_Maro.vsix</MaroVsixPath>

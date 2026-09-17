@@ -101,7 +101,7 @@ Maro_Diagnostic Maro_MakeIdeFinding(
     diagnostic.findingId = L"Maro_IDE_" + std::to_wstring(request.sourceVersion) + L"_" + code;
     diagnostic.code = std::move(code);
     diagnostic.analyzer = L"CLive_Maro";
-    diagnostic.analyzerVersion = L"1.2.2";
+    diagnostic.analyzerVersion = L"1.2.3";
     diagnostic.severity = severity;
     diagnostic.evidence = evidence;
     diagnostic.friendlyMessage = std::move(message);

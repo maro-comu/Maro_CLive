@@ -20,6 +20,7 @@
     <ClCompile Include="maro_Analyzer.cpp"><Filter>maro_Source</Filter></ClCompile>
     <ClCompile Include="maro_Engine.cpp"><Filter>maro_Source</Filter></ClCompile>
     <ClCompile Include="maro_Update.cpp"><Filter>maro_Source</Filter></ClCompile>
+    <ClCompile Include="maro_DiagnosticWindow.cpp"><Filter>maro_Source</Filter></ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="maro_CLive_Maro_Package.hpp"><Filter>maro_Header</Filter></ClInclude>
@@ -30,6 +31,8 @@
     <ClInclude Include="maro_Analyzer.hpp"><Filter>maro_Header</Filter></ClInclude>
     <ClInclude Include="maro_Engine.hpp"><Filter>maro_Header</Filter></ClInclude>
     <ClInclude Include="maro_Update.hpp"><Filter>maro_Header</Filter></ClInclude>
+    <ClInclude Include="maro_OutputQueue.hpp"><Filter>maro_Header</Filter></ClInclude>
+    <ClInclude Include="maro_DiagnosticWindow.hpp"><Filter>maro_Header</Filter></ClInclude>
   </ItemGroup>
   <ItemGroup>
     <None Include="maro_CLive_Maro_Extension.def"><Filter>maro_Package</Filter></None>

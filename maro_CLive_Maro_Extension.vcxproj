@@ -113,6 +113,7 @@
     <ClCompile Include="maro_Engine.cpp" />
     <ClCompile Include="maro_VisualStudio.cpp" />
     <ClCompile Include="maro_Update.cpp" />
+    <ClCompile Include="maro_DiagnosticWindow.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ResourceCompile Include="maro_CLive_Maro_Resources.rc" />
@@ -126,6 +127,8 @@
     <ClInclude Include="maro_Engine.hpp" />
     <ClInclude Include="maro_VisualStudio.hpp" />
     <ClInclude Include="maro_Update.hpp" />
+    <ClInclude Include="maro_OutputQueue.hpp" />
+    <ClInclude Include="maro_DiagnosticWindow.hpp" />
   </ItemGroup>
   <ItemGroup>
     <None Include="maro_CLive_Maro_Extension.def" />

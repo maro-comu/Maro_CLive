@@ -12,6 +12,13 @@
     </Groups>
 
     <Buttons>
+      <Button guid="guidMaroCommandSet" id="maro_CommandDiagnostics" priority="0x0090" type="Button">
+        <Parent guid="guidMaroCommandSet" id="MaroCommandGroup" />
+        <Strings>
+          <ButtonText>CLive_Maro 실시간 진단 창</ButtonText>
+          <CommandName>CLive_Maro.Diagnostics</CommandName>
+        </Strings>
+      </Button>
       <Button guid="guidMaroCommandSet" id="MaroCommandAnalyze" priority="0x0100" type="Button">
         <Parent guid="guidMaroCommandSet" id="MaroCommandGroup" />
         <Strings>
@@ -42,6 +49,7 @@
       <IDSymbol name="MaroCommandAnalyze" value="0x0100" />
       <IDSymbol name="MaroCommandRun" value="0x0101" />
       <IDSymbol name="MaroCommandUpdate" value="0x0102" />
+      <IDSymbol name="maro_CommandDiagnostics" value="0x0103" />
       <IDSymbol name="MaroCommandGroup" value="0x1020" />
     </GuidSymbol>
   </Symbols>

@@ -1,6 +1,8 @@
 #pragma once
 
 #include "maro_Engine.hpp"
+#include "maro_OutputQueue.hpp"
+#include "maro_DiagnosticWindow.hpp"
 
 #include <atlbase.h>
 #include <atlcom.h>
@@ -25,6 +27,7 @@ extern const GUID Maro_CLive_Maro_RunPane;
 constexpr DWORD Maro_CLive_Maro_CommandAnalyze = 0x0100;
 constexpr DWORD Maro_CLive_Maro_CommandRun = 0x0101;
 constexpr DWORD Maro_CLive_Maro_CommandUpdate = 0x0102;
+constexpr DWORD maro_CommandDiagnostics = 0x0103;
 
 class ATL_NO_VTABLE Maro_CLive_Maro_Package
     : public ATL::CComObjectRootEx<ATL::CComSingleThreadModel>,
@@ -90,6 +93,11 @@ public:
     STDMETHOD(OnCmdUIContextChanged)(VSCOOKIE cookie, BOOL active) override;
 
 private:
+    HRESULT InitializeUi();
+    HRESULT EnsureDiagnosticWindow(bool activate);
+    void SetDiagnosticPending(const std::wstring& path, const wchar_t* status);
+    void ProcessUi() noexcept;
+    static void CALLBACK UiTimerProc(HWND window, UINT message, UINT_PTR timer, DWORD time) noexcept;
     HRESULT EnsureOutputPanes();
     HRESULT StartLiveTracking();
     HRESULT BindActiveBuffer();
@@ -98,26 +106,39 @@ private:
     HRESULT StartUpdate();
     void RunUpdate() noexcept;
     void QueueUpdateMessage(std::wstring text);
-    static void CALLBACK UpdateTimerProc(HWND window, UINT message, UINT_PTR timer, DWORD time) noexcept;
     void ScheduleLiveAnalysis() noexcept;
     void RunLiveAnalysis() noexcept;
     void PublishDiagnosticResult(const Maro_ResultEnvelope& result) noexcept;
     void PublishRunResult(const Maro_ResultEnvelope& result) noexcept;
     void WriteDiagnostic(std::wstring_view text) noexcept;
     void WriteRun(std::wstring_view text) noexcept;
-    static void CALLBACK LiveTimerProc(HWND window, UINT message, UINT_PTR timer, DWORD time) noexcept;
     void Shutdown() noexcept;
 
     ATL::CComPtr<IServiceProvider> serviceProvider_;
     ATL::CComPtr<IVsOutputWindowPane> diagnosticPane_;
     ATL::CComPtr<IVsOutputWindowPane> runPane_;
+    ATL::CComPtr<maro_DiagnosticWindow> diagnosticWindow_;
+    ATL::CComPtr<IVsWindowFrame> diagnosticFrame_;
+    bool creatingWindow_ = false;
+    std::mutex diagnosticMutex_;
+    std::optional<Maro_ResultEnvelope> pendingDiagnostic_;
+    std::atomic<std::uint64_t> diagnosticSourceVersion_{0};
+    maro_OutputQueue updateNotice_;
     ATL::CComPtr<IVsMonitorSelection> selectionMonitor_;
     ATL::CComPtr<IVsTextLines> observedLines_;
     std::unique_ptr<Maro_Engine> diagnosticEngine_;
     std::unique_ptr<Maro_Engine> runEngine_;
     DWORD selectionCookie_ = 0;
     DWORD textCookie_ = 0;
-    UINT_PTR liveTimer_ = 0;
+    UINT_PTR uiTimer_ = 0;
+    ULONGLONG liveDeadline_ = 0;
+    bool initialized_ = false;
+    bool initializing_ = false;
+    bool uiBusy_ = false;
+    bool shuttingDown_ = false;
+    HRESULT initializationResult_ = E_PENDING;
+    maro_OutputQueue diagnosticOutput_;
+    maro_OutputQueue runOutput_;
     std::uint64_t sourceVersion_ = 0;
     std::uint64_t lastLiveHash_ = 0;
     std::wstring lastLivePath_;
@@ -125,8 +146,5 @@ private:
     std::atomic_bool updateRunning_{false};
     std::atomic_bool updateCancelled_{false};
     std::thread updateThread_;
-    std::mutex updateMutex_;
-    std::wstring updateMessage_;
-    UINT_PTR updateTimer_ = 0;
     inline static Maro_CLive_Maro_Package* liveInstance_ = nullptr;
 };

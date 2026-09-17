@@ -1,5 +1,6 @@
 #include "maro_Analyzer.hpp"
 #include "maro_Engine.hpp"
+#include "maro_OutputQueue.hpp"
 #include "maro_Process.hpp"
 #include "maro_Text.hpp"
 #include "maro_Update.hpp"
@@ -341,6 +342,129 @@ void Maro_TestSourceGenerationAndMapping(Maro_TestState& state)
             emptyGenerated.lineMap.front().generatedLine == 1 &&
             emptyGenerated.lineMap.front().userLine == 1,
         "an empty snippet retains a source-map entry for its blank line");
+}
+
+void maro_TestOutputQueue(Maro_TestState& maro_state)
+{
+    maro_OutputQueue maro_queue(8);
+    maro_queue.Push(L"abc");
+    maro_queue.Push(L"def");
+    maro_state.Expect(maro_queue.Take(2) == L"ab", "output queue drains in FIFO order");
+    maro_state.Expect(maro_queue.Take(0).empty(), "zero-sized drain preserves pending output");
+    maro_state.Expect(maro_queue.Take(8) == L"cdef", "partial drain preserves the remaining output");
+    maro_state.Expect(maro_queue.Take(8).empty(), "output is not repeated after draining");
+    maro_queue.Push(L"abcde");
+    maro_queue.Push(L"fghij");
+    maro_state.Expect(maro_queue.Take(20) == L"cdefghij", "overflow retains bounded recent output");
+    maro_queue.Push(L"123456789AB");
+    maro_state.Expect(maro_queue.Take(20) == L"456789AB", "oversized output retains its bounded tail");
+    maro_queue.Push(L"pending");
+    maro_queue.Clear();
+    maro_state.Expect(maro_queue.Take(8).empty(), "clearing a pane removes pending output");
+    maro_OutputQueue maro_disabled(0);
+    maro_disabled.Push(L"ignored");
+    maro_disabled.Push(L"");
+    maro_state.Expect(maro_disabled.Take(8).empty(), "zero-capacity queues remain empty");
+
+    maro_OutputQueue maro_shared(8'192);
+    std::atomic_bool maro_finished{false};
+    std::wstring maro_expected;
+    for (int maro_index = 0; maro_index < 512; ++maro_index)
+    {
+        maro_expected.append(L"한글\n");
+    }
+    std::thread maro_producer([&] {
+        for (int maro_index = 0; maro_index < 512; ++maro_index)
+        {
+            maro_shared.Push(L"한글\n");
+        }
+        maro_finished.store(true, std::memory_order_release);
+    });
+    std::wstring maro_received;
+    while (!maro_finished.load(std::memory_order_acquire))
+    {
+        maro_received.append(maro_shared.Take(7));
+        std::this_thread::yield();
+    }
+    maro_producer.join();
+    maro_received.append(maro_shared.Take(8'192));
+    maro_state.Expect(maro_received == maro_expected, "worker output reaches the UI drain without loss or duplication");
+    maro_state.Expect(maro_shared.Take(8'192).empty(), "the UI drain consumes all queued worker output");
+}
+
+void maro_TestEngineLifecycle(Maro_TestState& maro_state)
+{
+    bool maro_started = true;
+    bool maro_cancelled = true;
+    bool maro_closed = true;
+    bool maro_callbacks = true;
+    std::chrono::steady_clock::duration maro_longestShutdown{};
+    for (std::uint64_t maro_iteration = 0; maro_iteration < 64; ++maro_iteration)
+    {
+        {
+            Maro_Engine maro_idle({});
+            maro_idle.Shutdown();
+            maro_idle.Shutdown();
+        }
+
+        std::mutex maro_mutex;
+        std::condition_variable maro_condition;
+        bool maro_entered = false;
+        bool maro_continue = false;
+        std::size_t maro_callbackCount = 0;
+        Maro_Engine maro_engine([&](Maro_ResultEnvelope maro_result) {
+            std::unique_lock maro_lock(maro_mutex);
+            ++maro_callbackCount;
+            if (maro_result.phase == Maro_Phase::Generating)
+            {
+                maro_entered = true;
+                maro_condition.notify_one();
+                maro_condition.wait(maro_lock, [&] { return maro_continue; });
+            }
+        });
+        Maro_SourceRequest maro_request;
+        maro_request.sourceVersion = 5'000 + maro_iteration;
+        maro_request.sourceText = L"int main(void) { return 0; }";
+        maro_request.execute = false;
+        const std::uint64_t maro_id = maro_engine.Submit(maro_request);
+        maro_started = maro_started && maro_id != 0 &&
+            maro_engine.IsCurrent(maro_id, maro_request.sourceVersion);
+        {
+            std::unique_lock maro_lock(maro_mutex);
+            maro_started = maro_condition.wait_for(
+                maro_lock, std::chrono::seconds(2), [&] { return maro_entered; }) && maro_started;
+        }
+        maro_engine.Cancel();
+        maro_cancelled = maro_cancelled && maro_engine.CurrentRequestId() == 0 &&
+            !maro_engine.IsCurrent(maro_id, maro_request.sourceVersion);
+        {
+            std::lock_guard maro_lock(maro_mutex);
+            maro_continue = true;
+        }
+        maro_condition.notify_one();
+        const auto maro_before = std::chrono::steady_clock::now();
+        maro_engine.Shutdown();
+        const auto maro_elapsed = std::chrono::steady_clock::now() - maro_before;
+        if (maro_elapsed > maro_longestShutdown)
+        {
+            maro_longestShutdown = maro_elapsed;
+        }
+        maro_engine.Shutdown();
+        maro_closed = maro_closed && maro_engine.Submit(maro_request) == 0 &&
+            maro_engine.CurrentRequestId() == 0;
+        maro_callbacks = maro_callbacks && maro_callbackCount == 1;
+        if (!maro_started)
+        {
+            break;
+        }
+    }
+    maro_state.Expect(maro_started, "repeated engine startup accepts and dispatches work");
+    maro_state.Expect(maro_cancelled, "cancellation invalidates active work before shutdown");
+    maro_state.Expect(maro_closed, "repeated shutdown is safe and rejects new work");
+    maro_state.Expect(maro_callbacks, "cancelled engine work cannot publish after shutdown");
+    maro_state.Expect(
+        maro_longestShutdown < std::chrono::seconds(3),
+        "engine shutdown does not stall on startup or cancelled work");
 }
 
 void Maro_TestEngineSuccess(Maro_TestState& state)
@@ -793,18 +917,23 @@ void maro_TestOptionalUpdateCheck(Maro_TestState& state)
 }
 }
 
+bool maro_TestDiagnosticWindow();
+
 int main()
 {
     Maro_TestState state;
 
     try
     {
+        state.Expect(maro_TestDiagnosticWindow(), "diagnostic pane renders split read-only views, findings, resize and reopen");
         Maro_TestUtfConversions(state);
         Maro_TestTextCoordinates(state);
         Maro_TestTextUtilities(state);
         Maro_TestCommandLineQuoting(state);
         Maro_TestMainDetection(state);
         Maro_TestSourceGenerationAndMapping(state);
+        maro_TestOutputQueue(state);
+        maro_TestEngineLifecycle(state);
         Maro_TestEngineSuccess(state);
         Maro_TestEngineStreamingOutput(state);
         Maro_TestEngineCompileFailure(state);

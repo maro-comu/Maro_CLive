@@ -3,7 +3,7 @@
 "InprocServer32"="$PackageFolder$\maro_CLive_Maro.dll"
 "CompanyName"="Maro"
 "ProductName"="CLive_Maro"
-"ProductVersion"="1.2.2"
+"ProductVersion"="1.2.3"
 "MinEdition"="Community"
 "ID"=dword:00000001
 "AllowsBackgroundLoad"=dword:00000001
@@ -17,3 +17,11 @@
 
 [$RootKey$\Menus]
 "{c766c863-83a1-4fcf-bbf5-f26ffc83796b}"=", 1000, 1"
+
+[$RootKey$\ToolWindows\{85d62dc1-f3c5-4f1b-96f0-a679818e13ba}]
+@="{c766c863-83a1-4fcf-bbf5-f26ffc83796b}"
+"Name"="CLive_Maro"
+"Orientation"="Left"
+"Style"="Linked"
+"Window"="DocumentWell"
+"DockedWidth"=dword:00000154
