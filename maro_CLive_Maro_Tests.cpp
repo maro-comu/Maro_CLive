@@ -402,6 +402,78 @@ void maro_TestCompilerDiagnostics(Maro_TestState& maro_state)
         maro_state.Expect(maro_clang[1].originalDiagnostic.find(L"expected ';'") != std::wstring::npos,
             "compiler diagnostic original text remains available verbatim");
     }
+    const auto maro_semicolon = [](std::wstring maro_source, std::size_t maro_line,
+        std::wstring_view maro_message, std::wstring_view maro_code = L"C2143",
+        Maro_Language maro_language = Maro_Language::C17) {
+        Maro_SourceRequest maro_input;
+        maro_input.sourceText = std::move(maro_source);
+        maro_input.sourcePath = L"C:\\project\\maro_main.c";
+        maro_input.language = maro_language;
+        maro_input.mode = Maro_SourceMode::Program;
+        const std::wstring maro_path = maro_language == Maro_Language::C17
+            ? L"maro_UserSource.c" : L"maro_UserSource.cpp";
+        return Maro_ParseCompilerDiagnostics(maro_path + L"(" + std::to_wstring(maro_line) +
+            L",1): error " + std::wstring(maro_code) + L": " + std::wstring(maro_message),
+            maro_input, maro_BuildGeneratedSource(maro_input), L"MSVC", L"test").at(0);
+    };
+    const std::wstring maro_missing = L"#include <stdio.h>\nint main() {\n    printf(\"나는야 몽몽이\")\n    return 0;\n}";
+    const std::wstring maro_beforeReturn = L"syntax error: missing ';' before 'return'";
+    const auto maro_english = maro_semicolon(maro_missing, 4, maro_beforeReturn);
+    maro_state.Expect(maro_english.range.start.line == 3 && maro_english.range.end.line == 3 &&
+        maro_english.code == L"C2143" && maro_english.originalDiagnostic.find(L"(4,1)") != std::wstring::npos,
+        "missing semicolon points to the actual statement while preserving the compiler location and code");
+    maro_state.Expect(maro_english.range.start.column ==
+        Maro_WideToUtf8(L"    printf(\"나는야 몽몽이\")").size() + 1,
+        "missing-semicolon insertion columns preserve UTF-8 coordinates for Korean source text");
+    const auto maro_korean = maro_semicolon(maro_missing, 4, L"구문 오류: ';'이(가) 'return' 앞에 없습니다.");
+    maro_state.Expect(maro_korean.range.start.line == 3 &&
+        maro_korean.friendlyMessage.starts_with(L"문장 끝에 ';'가 필요합니다."),
+        "localized MSVC semicolon diagnostics identify the previous statement");
+    maro_state.Expect(maro_semicolon(L"int main() {\n    puts(\"x\") // trailing\n\n/* ignored\n ignored */\n    return 0;\n}",
+        6, maro_beforeReturn).range.start.line == 2,
+        "semicolon attribution skips blank lines and line or block comments");
+    maro_state.Expect(maro_semicolon(L"int main() {\n    printf(\n        \"%d\",\n        42\n    )\n    return 0;\n}",
+        6, maro_beforeReturn).range.start.line == 5,
+        "multiline calls point to the closing expression line instead of its beginning");
+    const std::wstring maro_inline = L"int main() { puts(\"x\") return 0; }";
+    const auto maro_sameLine = maro_semicolon(maro_inline, 1, maro_beforeReturn);
+    maro_state.Expect(maro_sameLine.range.start.line == 1 &&
+        maro_sameLine.range.start.column == maro_inline.find(L" return") + 1,
+        "same-line missing semicolons use the insertion column without changing the line");
+    maro_state.Expect(maro_semicolon(L"int main() {\r\n    int maro_value = 42\r\n    return 0;\r\n}",
+        3, maro_beforeReturn, L"C2143", Maro_Language::Cpp20).range.start.line == 2,
+        "C++ declarations with initializers and CRLF line endings map to the missing terminator");
+    maro_state.Expect(maro_semicolon(L"int main() {\n    std::cout << \"hello\"\n    return 0;\n}",
+        3, maro_beforeReturn, L"C2143", Maro_Language::Cpp20).range.start.line == 2,
+        "C++ stream expressions identify their missing semicolon");
+    maro_state.Expect(maro_semicolon(L"int main() {\n    puts(\"x\")\n    maro_value = 1;\n}",
+        3, L"syntax error: missing ';' before identifier 'maro_value'", L"C2146").range.start.line == 2,
+        "C2146 identifier diagnostics can identify the preceding incomplete call");
+    maro_state.Expect(maro_semicolon(maro_missing, 4, L"syntax error: missing ')' before 'return'").range.start.line == 4,
+        "missing parentheses are never treated as missing semicolons");
+    maro_state.Expect(maro_semicolon(maro_missing, 4, maro_beforeReturn, L"C2065").range.start.line == 4,
+        "unrelated compiler error codes keep the compiler location");
+    maro_state.Expect(maro_semicolon(L"int main() {\n    puts(\"x\");\n    return 0;\n}",
+        3, maro_beforeReturn).range.start.line == 3,
+        "a complete preceding statement is not incorrectly blamed");
+    maro_state.Expect(maro_semicolon(L"int main() {\n    if (1)\n    return 0;\n}",
+        3, maro_beforeReturn).range.start.line == 3,
+        "control-flow headers are not mistaken for unterminated calls");
+    maro_state.Expect(maro_semicolon(L"int main() {\n    for (int maro_i = 0\n        maro_i < 3; ++maro_i) {}\n}",
+        3, L"syntax error: missing ';' before identifier 'maro_i'", L"C2146").range.start.line == 3,
+        "errors inside for headers retain their compiler coordinates");
+    maro_state.Expect(maro_semicolon(L"int main() {\n    puts(\"x\"\n    return 0;\n}",
+        3, maro_beforeReturn).range.start.line == 3,
+        "unbalanced expressions are not given speculative semicolon positions");
+    maro_state.Expect(maro_semicolon(L"int main() {\n    int maro_function()\n    return 0;\n}",
+        3, maro_beforeReturn, L"C2143", Maro_Language::Cpp20).range.start.line == 3,
+        "function declarations are not confused with call expressions");
+    maro_state.Expect(maro_semicolon(L"int main() {\n    puts(R\"tag(a\"; return)tag\")\n    return 0;\n}",
+        3, maro_beforeReturn, L"C2143", Maro_Language::Cpp20).range.start.line == 3,
+        "raw string literals do not cause speculative token-based remapping");
+    maro_state.Expect(maro_semicolon(L"int main() {\n    puts(\"x\")\n    return 0;\n}",
+        3, L"syntax error: missing ';' before 'not_in_source'").range.start.line == 3,
+        "compiler token names must match the actual reported source line before remapping");
 }
 
 void maro_TestOutputQueue(Maro_TestState& maro_state)
@@ -450,6 +522,27 @@ void maro_TestOutputQueue(Maro_TestState& maro_state)
     maro_received.append(maro_shared.Take(8'192));
     maro_state.Expect(maro_received == maro_expected, "worker output reaches the UI drain without loss or duplication");
     maro_state.Expect(maro_shared.Take(8'192).empty(), "the UI drain consumes all queued worker output");
+    maro_queue.maro_Reset(10);
+    maro_queue.maro_PushVersion(9, L"stale");
+    maro_queue.maro_PushVersion(10, L"current");
+    maro_state.Expect(maro_queue.Take(8) == L"current", "only current source output reaches the live pane");
+    maro_queue.maro_Reset(11);
+    maro_queue.maro_PushVersion(10, L"late");
+    maro_state.Expect(maro_queue.Take(8).empty(), "late callbacks cannot repopulate a new source queue");
+    maro_queue.maro_Reset(0);
+    maro_queue.maro_PushVersion(0, L"invalid");
+    maro_state.Expect(maro_queue.Take(8).empty(), "cancelled source cannot emit output");
+    maro_shared.maro_Reset(20);
+    std::thread maro_stale([&] {
+        for (int maro_index = 0; maro_index < 10'000; ++maro_index)
+        {
+            maro_shared.maro_PushVersion(20, L"old");
+        }
+    });
+    maro_shared.maro_Reset(21);
+    maro_shared.maro_PushVersion(21, L"new");
+    maro_stale.join();
+    maro_state.Expect(maro_shared.Take(8'192) == L"new", "source reset and concurrent callback insertion are atomic");
 }
 
 void maro_TestEngineLifecycle(Maro_TestState& maro_state)

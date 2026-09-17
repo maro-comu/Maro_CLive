@@ -422,6 +422,196 @@ bool maro_IsSnapshotDiagnostic(std::wstring_view maro_path, std::wstring_view ma
     return !maro_reported.has_parent_path() && maro_reported.filename() == maro_name;
 }
 
+struct maro_SyntaxToken
+{
+    std::wstring_view maro_text;
+    std::size_t maro_start;
+    std::size_t maro_end;
+};
+
+std::optional<Maro_SourcePosition> maro_FindMissingSemicolon(
+    std::wstring_view maro_source, Maro_SourcePosition maro_reported,
+    std::wstring_view maro_code, const std::wstring& maro_message)
+{
+    if (maro_code != L"C2143" && maro_code != L"C2146")
+    {
+        return std::nullopt;
+    }
+    static const std::wregex maro_english(
+        LR"(missing\s+';'\s+before(?:\s+identifier)?\s+'([^']+)')", std::regex::icase);
+    static const std::wregex maro_korean(LR"(';'.*'([^']+)'\s*앞에.*없)");
+    std::wsmatch maro_match;
+    if (!std::regex_search(maro_message, maro_match, maro_english) &&
+        !std::regex_search(maro_message, maro_match, maro_korean))
+    {
+        return std::nullopt;
+    }
+    const std::wstring maro_target = maro_match[1].str();
+    const std::size_t maro_lineStart = Maro_LineColumnToUtf16Offset(maro_source, maro_reported.line, 1);
+    const std::size_t maro_columnOffset = Maro_LineColumnToUtf16Offset(
+        maro_source, maro_reported.line, maro_reported.column);
+    const std::size_t maro_lineEnd = maro_source.find(L'\n', maro_lineStart);
+    const std::size_t maro_limit = maro_lineEnd == std::wstring_view::npos ? maro_source.size() : maro_lineEnd;
+    std::vector<maro_SyntaxToken> maro_tokens;
+    std::size_t maro_targetIndex = 0;
+    bool maro_found = false;
+    for (std::size_t maro_index = 0; maro_index < maro_limit;)
+    {
+        if (std::iswspace(maro_source[maro_index]))
+        {
+            ++maro_index;
+            continue;
+        }
+        const std::size_t maro_start = maro_index;
+        const wchar_t maro_character = maro_source[maro_index];
+        const wchar_t maro_next = maro_index + 1 < maro_source.size() ? maro_source[maro_index + 1] : 0;
+        if (maro_character == L'/' && maro_next == L'/')
+        {
+            maro_index = maro_source.find(L'\n', maro_index + 2);
+            if (maro_index == std::wstring_view::npos)
+            {
+                break;
+            }
+            continue;
+        }
+        if (maro_character == L'/' && maro_next == L'*')
+        {
+            maro_index = maro_source.find(L"*/", maro_index + 2);
+            if (maro_index == std::wstring_view::npos)
+            {
+                return std::nullopt;
+            }
+            maro_index += 2;
+            continue;
+        }
+        if (maro_character == L'"' || maro_character == L'\'')
+        {
+            bool maro_closed = false;
+            for (++maro_index; maro_index < maro_source.size(); ++maro_index)
+            {
+                if (maro_source[maro_index] == L'\\')
+                {
+                    ++maro_index;
+                }
+                else if (maro_source[maro_index] == maro_character)
+                {
+                    ++maro_index;
+                    maro_closed = true;
+                    break;
+                }
+            }
+            if (!maro_closed)
+            {
+                return std::nullopt;
+            }
+        }
+        else if (std::iswalnum(maro_character) || maro_character == L'_')
+        {
+            while (++maro_index < maro_source.size() &&
+                (std::iswalnum(maro_source[maro_index]) || maro_source[maro_index] == L'_'))
+            {
+            }
+            if (maro_index < maro_source.size() && maro_source[maro_index] == L'"' &&
+                maro_source[maro_index - 1] == L'R')
+            {
+                return std::nullopt;
+            }
+        }
+        else
+        {
+            ++maro_index;
+            const std::wstring_view maro_pair = maro_source.substr(maro_start, 2);
+            if (maro_pair == L"::" || maro_pair == L"->" || maro_pair == L"++" || maro_pair == L"--" ||
+                maro_pair == L"==" || maro_pair == L"!=" || maro_pair == L"<=" || maro_pair == L">=" ||
+                maro_pair == L"<<" || maro_pair == L">>")
+            {
+                ++maro_index;
+            }
+        }
+        const std::wstring_view maro_text = maro_source.substr(maro_start, maro_index - maro_start);
+        if (maro_start >= maro_columnOffset && maro_start >= maro_lineStart && maro_text == maro_target)
+        {
+            maro_targetIndex = maro_tokens.size();
+            maro_found = true;
+            break;
+        }
+        maro_tokens.push_back({maro_text, maro_start, maro_index});
+    }
+    if (!maro_found || maro_targetIndex == 0)
+    {
+        return std::nullopt;
+    }
+    std::size_t maro_statement = 0;
+    int maro_parentheses = 0;
+    int maro_brackets = 0;
+    for (std::size_t maro_index = 0; maro_index < maro_targetIndex; ++maro_index)
+    {
+        const auto maro_token = maro_tokens[maro_index].maro_text;
+        if (maro_token == L"(") ++maro_parentheses;
+        if (maro_token == L")") --maro_parentheses;
+        if (maro_token == L"[") ++maro_brackets;
+        if (maro_token == L"]") --maro_brackets;
+        if (maro_parentheses < 0 || maro_brackets < 0)
+        {
+            return std::nullopt;
+        }
+        if (maro_parentheses == 0 && maro_brackets == 0 &&
+            (maro_token == L";" || maro_token == L"{" || maro_token == L"}"))
+        {
+            maro_statement = maro_index + 1;
+        }
+    }
+    if (maro_parentheses != 0 || maro_brackets != 0 || maro_statement >= maro_targetIndex)
+    {
+        return std::nullopt;
+    }
+    const auto maro_first = maro_tokens[maro_statement].maro_text;
+    for (const auto maro_control : {L"if", L"else", L"for", L"while", L"do", L"switch", L"catch",
+        L"try", L"struct", L"class", L"enum", L"namespace", L"typedef", L"template", L"case", L"default"})
+    {
+        if (maro_first == maro_control)
+        {
+            return std::nullopt;
+        }
+    }
+    bool maro_expression = maro_first == L"return" || maro_first == L"co_return" || maro_first == L"throw" ||
+        maro_first == L"break" || maro_first == L"continue" || maro_first == L"goto";
+    bool maro_callPrefix = std::iswalpha(maro_first.front()) || maro_first.front() == L'_';
+    for (std::size_t maro_index = maro_statement; maro_index < maro_targetIndex; ++maro_index)
+    {
+        const auto maro_token = maro_tokens[maro_index].maro_text;
+        if (maro_token == L"#" || maro_token == L"\\")
+        {
+            return std::nullopt;
+        }
+        maro_expression = maro_expression || maro_token == L"=" || maro_token == L"<<";
+        if (maro_token == L"(")
+        {
+            maro_expression = maro_expression || maro_callPrefix;
+            maro_callPrefix = false;
+        }
+        else if (maro_index > maro_statement)
+        {
+            const auto maro_previous = maro_tokens[maro_index - 1].maro_text;
+            maro_callPrefix = maro_callPrefix && (maro_token == L"::" || maro_token == L"." ||
+                maro_token == L"->" || maro_previous == L"::" || maro_previous == L"." || maro_previous == L"->");
+        }
+    }
+    const auto& maro_last = maro_tokens[maro_targetIndex - 1];
+    const wchar_t maro_lastCharacter = maro_last.maro_text.back();
+    if (!maro_expression || !(std::iswalnum(maro_lastCharacter) || maro_lastCharacter == L'_' ||
+        maro_lastCharacter == L')' || maro_lastCharacter == L']' || maro_lastCharacter == L'"' ||
+        maro_lastCharacter == L'\'' || maro_last.maro_text == L"++" || maro_last.maro_text == L"--"))
+    {
+        return std::nullopt;
+    }
+    const std::size_t maro_previousNewline = maro_source.rfind(L'\n', maro_last.maro_end - 1);
+    const std::size_t maro_insertLineStart = maro_previousNewline == std::wstring_view::npos ? 0 : maro_previousNewline + 1;
+    return Maro_SourcePosition{
+        1 + static_cast<std::size_t>(std::count(maro_source.begin(), maro_source.begin() + maro_last.maro_end, L'\n')),
+        1 + Maro_WideToUtf8(maro_source.substr(maro_insertLineStart, maro_last.maro_end - maro_insertLineStart)).size()};
+}
+
 std::wstring Maro_UnescapeFixIt(std::wstring_view escaped)
 {
     std::string bytes;
@@ -1148,6 +1338,13 @@ std::vector<Maro_Diagnostic> Maro_ParseCompilerDiagnostics(
             if (!generatedOnly)
             {
                 diagnostic.sourcePath = request.sourcePath;
+                if (const auto maro_insertion = maro_FindMissingSemicolon(
+                    request.sourceText, mapped, codeText, message))
+                {
+                    diagnostic.range.start = *maro_insertion;
+                    diagnostic.range.end = *maro_insertion;
+                    diagnostic.friendlyMessage = L"문장 끝에 ';'가 필요합니다.\r\n" + message;
+                }
             }
         }
         diagnostics.push_back(std::move(diagnostic));

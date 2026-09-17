@@ -104,6 +104,8 @@ private:
     HRESULT maro_GetDocumentLines(IVsTextLines** maro_lines);
     HRESULT ReadActiveSource(Maro_SourceRequest& request, std::wstring& displayPath);
     HRESULT StartAnalysis(bool execute);
+    HRESULT maro_SubmitSource(Maro_SourceRequest request, const std::wstring& path, bool execute, bool show);
+    void maro_CancelLiveWork() noexcept;
     HRESULT StartUpdate();
     void RunUpdate() noexcept;
     void QueueUpdateMessage(std::wstring text);
@@ -136,6 +138,7 @@ private:
     bool initialized_ = false;
     bool initializing_ = false;
     bool uiBusy_ = false;
+    bool maro_clearOutputPending_ = false;
     std::atomic<DWORD> maro_pendingCommands_{0};
     bool shuttingDown_ = false;
     HRESULT initializationResult_ = E_PENDING;

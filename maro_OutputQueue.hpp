@@ -1,6 +1,7 @@
 #pragma once
 
 #include <algorithm>
+#include <cstdint>
 #include <mutex>
 #include <string>
 #include <string_view>
@@ -15,20 +16,33 @@ public:
         try
         {
             std::lock_guard lock(mutex_);
-            if (text.size() >= capacity_)
-            {
-                text_.assign(text.substr(text.size() - capacity_));
-                return;
-            }
-            if (text_.size() + text.size() > capacity_)
-            {
-                text_.erase(0, text_.size() + text.size() - capacity_);
-            }
-            text_.append(text);
+            maro_Append(text);
         }
         catch (...)
         {
         }
+    }
+
+    void maro_PushVersion(std::uint64_t version, std::wstring_view text) noexcept
+    {
+        try
+        {
+            std::lock_guard lock(mutex_);
+            if (version != 0 && version == maro_version_)
+            {
+                maro_Append(text);
+            }
+        }
+        catch (...)
+        {
+        }
+    }
+
+    void maro_Reset(std::uint64_t version) noexcept
+    {
+        std::lock_guard lock(mutex_);
+        maro_version_ = version;
+        text_.clear();
     }
 
     std::wstring Take(std::size_t maximum)
@@ -47,7 +61,22 @@ public:
     }
 
 private:
+    void maro_Append(std::wstring_view text)
+    {
+        if (text.size() >= capacity_)
+        {
+            text_.assign(text.substr(text.size() - capacity_));
+            return;
+        }
+        if (text_.size() + text.size() > capacity_)
+        {
+            text_.erase(0, text_.size() + text.size() - capacity_);
+        }
+        text_.append(text);
+    }
+
     const std::size_t capacity_;
     std::mutex mutex_;
     std::wstring text_;
+    std::uint64_t maro_version_ = 0;
 };

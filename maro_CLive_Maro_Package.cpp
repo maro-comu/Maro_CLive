@@ -208,6 +208,14 @@ void Maro_CLive_Maro_Package::ProcessUi() noexcept
         }
         if (initialized_ && !shuttingDown_)
         {
+            if (std::exchange(maro_clearOutputPending_, false))
+            {
+                if (diagnosticWindow_ != nullptr)
+                {
+                    diagnosticWindow_->maro_ClearOutput();
+                }
+                runPane_->Clear();
+            }
             const DWORD maro_commands = maro_pendingCommands_.exchange(0);
             HRESULT maro_commandResult = S_OK;
             if ((maro_commands & 3) != 0 && !shuttingDown_)
@@ -251,13 +259,16 @@ void Maro_CLive_Maro_Package::ProcessUi() noexcept
             {
                 diagnosticWindow_->maro_SetNotice(std::move(notice));
             }
+            const auto maro_diagnosticVersion = diagnosticSourceVersion_.load(std::memory_order_acquire);
+            const auto maro_outputVersion = runDiagnosticVersion_.load(std::memory_order_acquire);
             const auto diagnostic = diagnosticOutput_.Take(32 * 1024);
             const auto output = runOutput_.Take(32 * 1024);
-            if (!shuttingDown_)
+            if (!shuttingDown_ &&
+                maro_diagnosticVersion == diagnosticSourceVersion_.load(std::memory_order_acquire))
             {
                 maro_WritePane(diagnosticPane_, diagnostic);
             }
-            if (!shuttingDown_)
+            if (!shuttingDown_ && maro_outputVersion == runDiagnosticVersion_.load(std::memory_order_acquire))
             {
                 if (diagnosticWindow_ != nullptr)
                 {
@@ -455,8 +466,7 @@ void STDMETHODCALLTYPE Maro_CLive_Maro_Package::OnChangeLineText(const TextLineC
 {
     if (last)
     {
-        runDiagnosticVersion_.store(0, std::memory_order_release);
-        diagnosticSourceVersion_.store(0, std::memory_order_release);
+        maro_CancelLiveWork();
         ScheduleLiveAnalysis();
     }
 }
@@ -479,8 +489,14 @@ STDMETHODIMP Maro_CLive_Maro_Package::OnSelectionChanged(
     return S_OK;
 }
 
-STDMETHODIMP Maro_CLive_Maro_Package::OnElementValueChanged(VSSELELEMID, VARIANT, VARIANT)
+STDMETHODIMP Maro_CLive_Maro_Package::OnElementValueChanged(VSSELELEMID element, VARIANT oldValue, VARIANT newValue)
 {
+    if (element == SEID_DocumentFrame && (oldValue.vt != newValue.vt ||
+        (oldValue.vt == VT_UNKNOWN && oldValue.punkVal != newValue.punkVal) ||
+        (oldValue.vt == VT_DISPATCH && oldValue.pdispVal != newValue.pdispVal)))
+    {
+        maro_CancelLiveWork();
+    }
     ScheduleLiveAnalysis();
     return S_OK;
 }
@@ -597,6 +613,23 @@ void Maro_CLive_Maro_Package::ScheduleLiveAnalysis() noexcept
     liveDeadline_ = GetTickCount64() + 650;
 }
 
+void Maro_CLive_Maro_Package::maro_CancelLiveWork() noexcept
+{
+    runDiagnosticVersion_.store(0, std::memory_order_release);
+    diagnosticSourceVersion_.store(0, std::memory_order_release);
+    runOutput_.maro_Reset(0);
+    diagnosticOutput_.maro_Reset(0);
+    maro_clearOutputPending_ = true;
+    if (runEngine_ != nullptr)
+    {
+        runEngine_->Cancel();
+    }
+    if (diagnosticEngine_ != nullptr)
+    {
+        diagnosticEngine_->Cancel();
+    }
+}
+
 void Maro_CLive_Maro_Package::RunLiveAnalysis() noexcept
 {
     try
@@ -611,8 +644,7 @@ void Maro_CLive_Maro_Package::RunLiveAnalysis() noexcept
             {
                 lastLivePath_.clear();
                 lastLiveHash_ = 0;
-                runDiagnosticVersion_.store(0, std::memory_order_release);
-                diagnosticEngine_->Cancel();
+                maro_CancelLiveWork();
                 diagnosticOutput_.Clear();
                 diagnosticPane_->Clear();
                 WriteDiagnostic(L"C/C++ 문서를 열어 주세요.\r\n");
@@ -627,15 +659,7 @@ void Maro_CLive_Maro_Package::RunLiveAnalysis() noexcept
         {
             return;
         }
-        lastLivePath_ = request.sourcePath;
-        lastLiveHash_ = hash;
-        runDiagnosticVersion_.store(0, std::memory_order_release);
-        request.execute = false;
-        SetDiagnosticPending(displayPath, L"검사 중...");
-        diagnosticOutput_.Clear();
-        diagnosticPane_->Clear();
-        WriteDiagnostic(L"CLive_Maro 실시간 진단 | " + displayPath + L"\r\n검사 중...\r\n");
-        if (diagnosticEngine_->Submit(std::move(request)) == 0)
+        if (FAILED(maro_SubmitSource(std::move(request), displayPath, true, false)))
         {
             WriteDiagnostic(L"분석을 시작하지 못했습니다.\r\n");
         }
@@ -786,49 +810,7 @@ HRESULT Maro_CLive_Maro_Package::StartAnalysis(bool execute)
             return S_OK;
         }
 
-        request.execute = execute;
-        SetDiagnosticPending(displayPath, execute ? L"분석 및 실행 중..." : L"검사 중...");
-        if (execute)
-        {
-            diagnosticEngine_->Cancel();
-            lastLivePath_ = request.sourcePath;
-            lastLiveHash_ = Maro_HashSource(request.sourceText);
-            runDiagnosticVersion_.store(request.sourceVersion, std::memory_order_release);
-            diagnosticOutput_.Clear();
-            runOutput_.Clear();
-            diagnosticPane_->Clear();
-            runPane_->Clear();
-            EnsureDiagnosticWindow(false);
-            if (diagnosticWindow_ != nullptr)
-            {
-                diagnosticWindow_->maro_ClearOutput();
-            }
-            WriteDiagnostic(L"CLive_Maro 실시간 진단 | " + displayPath + L"\r\n");
-            WriteRun(L"실행 중...\r\n");
-        }
-        else
-        {
-            runDiagnosticVersion_.store(0, std::memory_order_release);
-            lastLivePath_ = request.sourcePath;
-            lastLiveHash_ = Maro_HashSource(request.sourceText);
-            diagnosticOutput_.Clear();
-            diagnosticPane_->Clear();
-            EnsureDiagnosticWindow(false);
-            WriteDiagnostic(L"CLive_Maro 실시간 진단 | " + displayPath + L"\r\n검사 중...\r\n");
-        }
-
-        if (engine->Submit(std::move(request)) == 0)
-        {
-            if (execute)
-            {
-                WriteRun(L"작업을 시작하지 못했습니다.\r\n");
-            }
-            else
-            {
-                WriteDiagnostic(L"작업을 시작하지 못했습니다.\r\n");
-            }
-        }
-        return S_OK;
+        return maro_SubmitSource(std::move(request), displayPath, execute, true);
     }
     catch (const std::bad_alloc&)
     {
@@ -840,6 +822,43 @@ HRESULT Maro_CLive_Maro_Package::StartAnalysis(bool execute)
         WriteDiagnostic(L"작업을 시작하지 못했습니다.\r\n");
         return E_FAIL;
     }
+}
+
+HRESULT Maro_CLive_Maro_Package::maro_SubmitSource(
+    Maro_SourceRequest request, const std::wstring& path, bool execute, bool show)
+{
+    maro_CancelLiveWork();
+    maro_clearOutputPending_ = false;
+    liveDeadline_ = 0;
+    lastLivePath_ = request.sourcePath;
+    lastLiveHash_ = Maro_HashSource(request.sourceText);
+    request.execute = execute;
+    SetDiagnosticPending(path, L"검사 중...");
+    diagnosticOutput_.maro_Reset(request.sourceVersion);
+    diagnosticPane_->Clear();
+    runPane_->Clear();
+    if (show)
+    {
+        EnsureDiagnosticWindow(false);
+    }
+    if (diagnosticWindow_ != nullptr)
+    {
+        diagnosticWindow_->maro_ClearOutput();
+    }
+    WriteDiagnostic(L"CLive_Maro 실시간 진단 | " + path + L"\r\n검사 중...\r\n");
+    if (execute)
+    {
+        runDiagnosticVersion_.store(request.sourceVersion, std::memory_order_release);
+        runOutput_.maro_Reset(request.sourceVersion);
+        WriteRun(L"준비 중...\r\n");
+    }
+    Maro_Engine* engine = execute ? runEngine_.get() : diagnosticEngine_.get();
+    if (engine == nullptr || engine->Submit(std::move(request)) == 0)
+    {
+        WriteDiagnostic(L"작업을 시작하지 못했습니다.\r\n");
+        return E_FAIL;
+    }
+    return S_OK;
 }
 
 HRESULT Maro_CLive_Maro_Package::StartUpdate()
@@ -880,10 +899,10 @@ void Maro_CLive_Maro_Package::RunUpdate() noexcept
     const HRESULT initialized = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
     try
     {
-        const auto check = maro_CheckForUpdate({1, 2, 4}, &updateCancelled_);
+        const auto check = maro_CheckForUpdate({1, 2, 5}, &updateCancelled_);
         if (check.status == Maro_UpdateCheckStatus::Current)
         {
-            QueueUpdateMessage(L"최신 버전입니다. (v1.2.4)\r\n");
+            QueueUpdateMessage(L"최신 버전입니다. (v1.2.5)\r\n");
         }
         else if (check.status == Maro_UpdateCheckStatus::Failed)
         {
@@ -918,7 +937,9 @@ void Maro_CLive_Maro_Package::PublishDiagnosticResult(const Maro_ResultEnvelope&
 {
     try
     {
-        if (!Maro_IsCompleted(result))
+        const bool maro_analyzed = result.phase == Maro_Phase::Compiling;
+        if ((!Maro_IsCompleted(result) && !maro_analyzed) ||
+            result.sourceVersion != diagnosticSourceVersion_.load(std::memory_order_acquire))
         {
             return;
         }
@@ -927,8 +948,8 @@ void Maro_CLive_Maro_Package::PublishDiagnosticResult(const Maro_ResultEnvelope&
         {
             Maro_ResultEnvelope snapshot;
             snapshot.sourceVersion = result.sourceVersion;
-            snapshot.status = result.status;
-            snapshot.statusText = result.statusText;
+            snapshot.status = maro_analyzed ? Maro_Status::Success : result.status;
+            snapshot.statusText = maro_analyzed ? L"검사 완료" : result.statusText;
             snapshot.diagnostics = result.diagnostics;
             std::lock_guard lock(diagnosticMutex_);
             if (result.sourceVersion == diagnosticSourceVersion_.load(std::memory_order_acquire))
@@ -938,7 +959,7 @@ void Maro_CLive_Maro_Package::PublishDiagnosticResult(const Maro_ResultEnvelope&
         }
 
         std::wostringstream text;
-        text << L"\r\n" << result.statusText << L"\r\n";
+        text << L"\r\n" << (maro_analyzed ? L"검사 완료" : result.statusText) << L"\r\n";
         if (result.diagnostics.empty() && result.status == Maro_Status::Success)
         {
             text << L"문제 없음.\r\n";
@@ -963,11 +984,11 @@ void Maro_CLive_Maro_Package::PublishDiagnosticResult(const Maro_ResultEnvelope&
         {
             text << L"\r\n" << result.compilerOutput;
         }
-        WriteDiagnostic(text.str());
+        diagnosticOutput_.maro_PushVersion(result.sourceVersion, text.str());
     }
     catch (...)
     {
-        WriteDiagnostic(L"진단 표시 중 오류가 발생했습니다.\r\n");
+        diagnosticOutput_.maro_PushVersion(result.sourceVersion, L"진단 표시 중 오류가 발생했습니다.\r\n");
     }
 }
 
@@ -975,15 +996,23 @@ void Maro_CLive_Maro_Package::PublishRunResult(const Maro_ResultEnvelope& result
 {
     try
     {
+        if (result.sourceVersion != runDiagnosticVersion_.load(std::memory_order_acquire))
+        {
+            return;
+        }
+        if (result.phase == Maro_Phase::Compiling)
+        {
+            PublishDiagnosticResult(result);
+        }
         if (!Maro_IsCompleted(result))
         {
             if (!result.standardOutput.empty())
             {
-                WriteRun(result.standardOutput);
+                runOutput_.maro_PushVersion(result.sourceVersion, result.standardOutput);
             }
             if (!result.standardError.empty())
             {
-                WriteRun(L"[stderr] " + result.standardError);
+                runOutput_.maro_PushVersion(result.sourceVersion, L"[stderr] " + result.standardError);
             }
             return;
         }
@@ -991,11 +1020,11 @@ void Maro_CLive_Maro_Package::PublishRunResult(const Maro_ResultEnvelope& result
         {
             PublishDiagnosticResult(result);
         }
-        WriteRun(L"\r\n" + result.statusText + L"\r\n");
+        runOutput_.maro_PushVersion(result.sourceVersion, L"\r\n" + result.statusText + L"\r\n");
     }
     catch (...)
     {
-        WriteRun(L"실행 출력 표시 중 오류가 발생했습니다.\r\n");
+        runOutput_.maro_PushVersion(result.sourceVersion, L"실행 출력 표시 중 오류가 발생했습니다.\r\n");
     }
 }
 
