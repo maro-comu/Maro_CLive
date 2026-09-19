@@ -94,12 +94,25 @@
     <ClCompile Include="maro_CLive_Maro_Tests.cpp" />
     <ClCompile Include="maro_DiagnosticWindow.cpp" />
     <ClCompile Include="maro_DiagnosticWindow_Tests.cpp" />
+    <ClCompile Include="maro_DiagnosticFilter.cpp" />
+    <ClCompile Include="maro_DiagnosticFilter_Tests.cpp" />
     <ClCompile Include="maro_CLive_Maro_Package.cpp" />
     <ClCompile Include="maro_Package_Tests.cpp" />
     <ClCompile Include="maro_Text.cpp" />
     <ClCompile Include="maro_Process.cpp" />
     <ClCompile Include="maro_Analyzer.cpp" />
     <ClCompile Include="maro_Engine.cpp" />
+    <ClCompile Include="maro_Project.cpp" />
+    <ClCompile Include="maro_SourceInsight.cpp" />
+    <ClCompile Include="maro_SourceInsight_Tests.cpp" />
+    <ClCompile Include="maro_SourceWindow.cpp" />
+    <ClCompile Include="maro_SourceWindow_Tests.cpp" />
+    <ClCompile Include="maro_InsightWorker.cpp" />
+    <ClCompile Include="maro_Trace.cpp" />
+    <ClCompile Include="maro_Trace_Tests.cpp" />
+    <ClCompile Include="maro_Encoding_Tests.cpp" />
+    <ClCompile Include="maro_Project_Tests.cpp" />
+    <ClCompile Include="maro_ProcessInput_Tests.cpp" />
     <ClCompile Include="maro_VisualStudio.cpp" />
     <ClCompile Include="maro_Update.cpp" />
   </ItemGroup>
@@ -109,18 +122,20 @@
     <ClInclude Include="maro_Process.hpp" />
     <ClInclude Include="maro_Analyzer.hpp" />
     <ClInclude Include="maro_Engine.hpp" />
+    <ClInclude Include="maro_Project.hpp" />
     <ClInclude Include="maro_VisualStudio.hpp" />
     <ClInclude Include="maro_Update.hpp" />
     <ClInclude Include="maro_OutputQueue.hpp" />
     <ClInclude Include="maro_DiagnosticWindow.hpp" />
+    <ClInclude Include="maro_DiagnosticFilter.hpp" />
   </ItemGroup>
   <ItemDefinitionGroup>
     <Link>
       <AdditionalLibraryDirectories>$(MSBuildExtensionsPath32)\..\VSSDK\VisualStudioIntegration\Common\Lib\x64;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
-      <AdditionalDependencies>comctl32.lib;vsguids.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>dbghelp.lib;comctl32.lib;vsguids.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
     <ClCompile>
-      <AdditionalIncludeDirectories>$(MSBuildExtensionsPath32)\..\VSSDK\VisualStudioIntegration\Common\Inc;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(VSInstallDir)DIA SDK\include;$(MSBuildExtensionsPath32)\..\VSSDK\VisualStudioIntegration\Common\Inc;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <PreprocessorDefinitions>NOMINMAX;%(PreprocessorDefinitions)</PreprocessorDefinitions>
     </ClCompile>
   </ItemDefinitionGroup>

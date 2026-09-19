@@ -37,10 +37,12 @@ private:
         std::uint64_t requestId = 0;
         std::uint64_t cancellationGeneration = 0;
         Maro_SourceRequest request;
+        std::uint64_t maro_sourceHash = 0;
     };
 
     void WorkerLoop(std::stop_token stopToken);
     void ProcessOne(const Maro_PendingWork& work, std::stop_token stopToken);
+    void maro_ProcessProject(const Maro_PendingWork& maro_work, const std::function<bool()>& maro_cancelled);
     void Publish(const Maro_PendingWork& work, Maro_ResultEnvelope result);
 
     Maro_ResultCallback callback_;

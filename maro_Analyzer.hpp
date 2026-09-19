@@ -62,7 +62,7 @@ std::vector<Maro_Diagnostic> Maro_ParseCompilerDiagnostics(
     std::wstring_view analyzerVersion,
     std::wstring_view maro_generatedSourcePath = {});
 
-Maro_ToolchainInfo Maro_DetectToolchain();
+Maro_ToolchainInfo Maro_DetectToolchain(bool maro_msvcOnly = false);
 
 Maro_AnalysisResult Maro_AnalyzeSource(
     const Maro_ToolchainInfo& toolchain,

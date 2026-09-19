@@ -8,8 +8,8 @@
 MARO_CLIVE_MARO_VSIX_RESOURCE RCDATA MARO_CLIVE_MARO_EMBEDDED_VSIX
 
 VS_VERSION_INFO VERSIONINFO
- FILEVERSION 1,2,5,0
- PRODUCTVERSION 1,2,5,0
+ FILEVERSION 2,1,0,0
+ PRODUCTVERSION 2,1,0,0
  FILEFLAGSMASK 0x3fL
 #ifdef MARO_DEBUG_BUILD
  FILEFLAGS VS_FF_DEBUG
@@ -26,11 +26,11 @@ BEGIN
         BEGIN
             VALUE "CompanyName", "Maro\0"
             VALUE "FileDescription", "CLive_Maro Visual Studio extension installer\0"
-            VALUE "FileVersion", "1.2.5\0"
+            VALUE "FileVersion", "2.1.0\0"
             VALUE "InternalName", "CLive_Maro\0"
-            VALUE "OriginalFilename", "maro_CLive_Maro_v1.2.5.exe\0"
+            VALUE "OriginalFilename", "maro_CLive_Maro_v2.1.0.exe\0"
             VALUE "ProductName", "CLive_Maro\0"
-            VALUE "ProductVersion", "1.2.5\0"
+            VALUE "ProductVersion", "2.1.0\0"
         END
     END
     BLOCK "VarFileInfo"

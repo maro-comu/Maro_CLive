@@ -3,8 +3,12 @@
 #include <cstddef>
 #include <cstdint>
 #include <optional>
+#include <memory>
 #include <string>
 #include <vector>
+
+class maro_ProcessInput;
+class maro_TraceSession;
 
 enum class Maro_Language
 {
@@ -103,6 +107,7 @@ struct Maro_Diagnostic
     std::wstring friendlyMessage;
     std::wstring originalDiagnostic;
     std::optional<Maro_FixSuggestion> fix;
+    std::size_t maro_relatedCount = 0;
 };
 
 struct Maro_SourceRequest
@@ -114,6 +119,15 @@ struct Maro_SourceRequest
     Maro_Language language = Maro_Language::C17;
     Maro_SourceMode mode = Maro_SourceMode::Program;
     bool execute = true;
+    std::shared_ptr<maro_ProcessInput> maro_input;
+    std::wstring maro_projectPath;
+    std::wstring maro_configuration;
+    std::wstring maro_platform;
+    std::wstring maro_msbuildPath;
+    std::wstring maro_solutionPath;
+    std::shared_ptr<maro_TraceSession> maro_trace;
+    unsigned maro_outputCodePage = 0;
+    bool maro_background = false;
 };
 
 struct Maro_SourceMapEntry
@@ -165,4 +179,6 @@ struct Maro_ResultEnvelope
     bool usedFallbackCompiler = false;
     bool snippetWrapped = false;
     bool resourceLimitsApplied = false;
+    std::uint64_t maro_compileMilliseconds = 0;
+    std::uint64_t maro_runMilliseconds = 0;
 };

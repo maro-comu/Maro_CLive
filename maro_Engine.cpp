@@ -2,6 +2,7 @@
 
 #include "maro_Analyzer.hpp"
 #include "maro_Process.hpp"
+#include "maro_Project.hpp"
 #include "maro_Text.hpp"
 
 #ifndef WIN32_LEAN_AND_MEAN
@@ -12,6 +13,7 @@
 #endif
 #include <windows.h>
 
+#include <algorithm>
 #include <filesystem>
 #include <iterator>
 #include <utility>
@@ -19,6 +21,39 @@
 namespace
 {
 namespace fs = std::filesystem;
+
+struct maro_DecodedStream
+{
+    maro_DecodedStream(unsigned maro_page, std::size_t maro_limit)
+        : maro_decoder(maro_page), maro_capacity(maro_limit)
+    {
+    }
+
+    std::wstring maro_Decode(std::string_view maro_bytes, bool maro_final = false)
+    {
+        auto maro_chunk = Maro_SanitizeOutput(maro_decoder.maro_Decode(maro_bytes, maro_final));
+        maro_text += maro_chunk;
+        if (maro_text.size() > maro_capacity &&
+            maro_text.size() - maro_capacity > (std::min)(maro_capacity, std::size_t{32u << 10}))
+        {
+            maro_Trim();
+        }
+        return maro_chunk;
+    }
+
+    void maro_Trim()
+    {
+        if (maro_text.size() <= maro_capacity) return;
+        std::size_t maro_remove = maro_text.size() - maro_capacity;
+        if (maro_remove < maro_text.size() && maro_text[maro_remove] >= 0xdc00 && maro_text[maro_remove] <= 0xdfff)
+            ++maro_remove;
+        maro_text.erase(0, maro_remove);
+    }
+
+    maro_OutputDecoder maro_decoder;
+    std::size_t maro_capacity;
+    std::wstring maro_text;
+};
 
 class Maro_TemporaryDirectory
 {
@@ -82,7 +117,6 @@ Maro_ResultEnvelope Maro_BaseEnvelope(
     Maro_ResultEnvelope result;
     result.requestId = requestId;
     result.sourceVersion = request.sourceVersion;
-    result.sourceHash = Maro_HashSource(request.sourceText);
     result.phase = phase;
     result.status = status;
     result.statusText = std::move(statusText);
@@ -101,7 +135,7 @@ Maro_Diagnostic Maro_MakeIdeFinding(
     diagnostic.findingId = L"Maro_IDE_" + std::to_wstring(request.sourceVersion) + L"_" + code;
     diagnostic.code = std::move(code);
     diagnostic.analyzer = L"CLive_Maro";
-    diagnostic.analyzerVersion = L"1.2.5";
+    diagnostic.analyzerVersion = L"2.1.0";
     diagnostic.severity = severity;
     diagnostic.evidence = evidence;
     diagnostic.friendlyMessage = std::move(message);
@@ -122,6 +156,7 @@ Maro_Engine::~Maro_Engine()
 
 std::uint64_t Maro_Engine::Submit(Maro_SourceRequest request)
 {
+    const auto maro_sourceHash = Maro_HashSource(request.sourceText);
     std::uint64_t requestId = 0;
     {
         std::lock_guard lock(mutex_);
@@ -133,7 +168,8 @@ std::uint64_t Maro_Engine::Submit(Maro_SourceRequest request)
         const std::uint64_t generation = cancellationGeneration_.fetch_add(1, std::memory_order_acq_rel) + 1;
         currentRequestId_.store(requestId, std::memory_order_release);
         currentSourceVersion_.store(request.sourceVersion, std::memory_order_release);
-        pending_ = Maro_PendingWork{requestId, generation, std::move(request)};
+        if (pending_ && pending_->request.maro_input) pending_->request.maro_input->maro_Close();
+        pending_ = Maro_PendingWork{requestId, generation, std::move(request), maro_sourceHash};
     }
     condition_.notify_all();
     return requestId;
@@ -146,6 +182,7 @@ void Maro_Engine::Cancel()
         cancellationGeneration_.fetch_add(1, std::memory_order_acq_rel);
         currentRequestId_.store(0, std::memory_order_release);
         currentSourceVersion_.store(0, std::memory_order_release);
+        if (pending_ && pending_->request.maro_input) pending_->request.maro_input->maro_Close();
         pending_.reset();
     }
     condition_.notify_all();
@@ -163,6 +200,7 @@ void Maro_Engine::Shutdown()
         cancellationGeneration_.fetch_add(1, std::memory_order_acq_rel);
         currentRequestId_.store(0, std::memory_order_release);
         currentSourceVersion_.store(0, std::memory_order_release);
+        if (pending_ && pending_->request.maro_input) pending_->request.maro_input->maro_Close();
         pending_.reset();
     }
     worker_.request_stop();
@@ -235,7 +273,7 @@ void Maro_Engine::Publish(const Maro_PendingWork& work, Maro_ResultEnvelope resu
     }
     result.requestId = work.requestId;
     result.sourceVersion = work.request.sourceVersion;
-    result.sourceHash = Maro_HashSource(work.request.sourceText);
+    result.sourceHash = work.maro_sourceHash;
     try
     {
         callback_(std::move(result));
@@ -247,6 +285,11 @@ void Maro_Engine::Publish(const Maro_PendingWork& work, Maro_ResultEnvelope resu
 
 void Maro_Engine::ProcessOne(const Maro_PendingWork& work, std::stop_token stopToken)
 {
+    struct maro_InputLifetime
+    {
+        std::shared_ptr<maro_ProcessInput> maro_input;
+        ~maro_InputLifetime() { if (maro_input) maro_input->maro_Close(); }
+    } maro_inputLifetime{work.request.maro_input};
     Maro_ExecutionLimits limits;
     {
         std::lock_guard lock(mutex_);
@@ -264,6 +307,19 @@ void Maro_Engine::ProcessOne(const Maro_PendingWork& work, std::stop_token stopT
         Publish(work, std::move(result));
     };
 
+    if (!work.request.maro_projectPath.empty())
+    {
+        maro_ProcessProject(work, cancelled);
+        return;
+    }
+    if (work.request.maro_input)
+    {
+        limits.analysisWallMilliseconds = 60'000;
+        limits.compileWallMilliseconds = 120'000;
+        limits.compileMemoryBytes = 4ull << 30;
+        limits.sourceBytes = 16u << 20;
+    }
+
     Publish(work, Maro_BaseEnvelope(
         work.requestId, work.request, Maro_Phase::Generating, Maro_Status::Pending,
         work.request.mode == Maro_SourceMode::Snippet ? L"학습용 코드를 생성하는 중…" : L"소스를 준비하는 중…"));
@@ -274,12 +330,18 @@ void Maro_Engine::ProcessOne(const Maro_PendingWork& work, std::stop_token stopT
         return;
     }
 
-    static const Maro_ToolchainInfo toolchain = Maro_DetectToolchain();
+    static const Maro_ToolchainInfo maro_defaultToolchain = Maro_DetectToolchain();
+    const auto& toolchain = [&]() -> const Maro_ToolchainInfo& {
+        if (!work.request.maro_trace) return maro_defaultToolchain;
+        static const Maro_ToolchainInfo maro_traceToolchain = Maro_DetectToolchain(true);
+        return maro_traceToolchain;
+    }();
     if (toolchain.kind == Maro_ToolchainKind::None)
     {
         Maro_ResultEnvelope result = Maro_BaseEnvelope(
             work.requestId, work.request, Maro_Phase::Completed, Maro_Status::ToolchainMissing,
-            L"Clang 또는 MSVC C/C++ 컴파일러를 찾지 못했습니다.");
+            work.request.maro_trace ? L"실제 한 줄 실행에는 Visual Studio MSVC C/C++ 도구가 필요합니다."
+                : L"Clang 또는 MSVC C/C++ 컴파일러를 찾지 못했습니다.");
         result.generatedSource = generated.text;
         result.snippetWrapped = generated.wrapped;
         result.diagnostics.push_back(Maro_MakeIdeFinding(
@@ -308,8 +370,16 @@ void Maro_Engine::ProcessOne(const Maro_PendingWork& work, std::stop_token stopT
     analyzing.usedFallbackCompiler = toolchain.fallback;
     Publish(work, std::move(analyzing));
 
-    Maro_AnalysisResult analysis = Maro_AnalyzeSource(
-        toolchain, work.request, generated, temporary.path(), limits, cancelled);
+    const bool maro_canRun = work.request.execute &&
+        (work.request.mode == Maro_SourceMode::Snippet || Maro_HasMain(work.request.sourceText));
+    Maro_AnalysisResult analysis;
+    analysis.succeeded = true;
+    const auto maro_analysisStarted = GetTickCount64();
+    if (!maro_canRun)
+    {
+        analysis = Maro_AnalyzeSource(toolchain, work.request, generated, temporary.path(), limits, cancelled);
+    }
+    const auto maro_analysisMs = GetTickCount64() - maro_analysisStarted;
     if (analysis.cancelled || cancelled())
     {
         finishCancelled();
@@ -343,6 +413,7 @@ void Maro_Engine::ProcessOne(const Maro_PendingWork& work, std::stop_token stopT
         result.compilerVersion = toolchain.version;
         result.usedFallbackCompiler = toolchain.fallback;
         result.resourceLimitsApplied = analysis.resourceLimitsApplied;
+        result.maro_compileMilliseconds = maro_analysisMs;
         Publish(work, std::move(result));
         return;
     }
@@ -359,6 +430,7 @@ void Maro_Engine::ProcessOne(const Maro_PendingWork& work, std::stop_token stopT
         result.compilerVersion = toolchain.version;
         result.usedFallbackCompiler = toolchain.fallback;
         result.resourceLimitsApplied = analysis.resourceLimitsApplied;
+        result.maro_compileMilliseconds = maro_analysisMs;
         Publish(work, std::move(result));
         return;
     }
@@ -381,6 +453,7 @@ void Maro_Engine::ProcessOne(const Maro_PendingWork& work, std::stop_token stopT
         result.compilerVersion = toolchain.version;
         result.usedFallbackCompiler = toolchain.fallback;
         result.resourceLimitsApplied = analysis.resourceLimitsApplied;
+        result.maro_compileMilliseconds = maro_analysisMs;
         Publish(work, std::move(result));
         return;
     }
@@ -423,8 +496,10 @@ void Maro_Engine::ProcessOne(const Maro_PendingWork& work, std::stop_token stopT
     compiling.usedFallbackCompiler = toolchain.fallback;
     Publish(work, std::move(compiling));
 
+    const auto maro_compileStarted = GetTickCount64();
     Maro_CompilationResult compilation = Maro_CompileSource(
         toolchain, work.request, generated, temporary.path(), limits, cancelled);
+    const auto maro_compileMs = GetTickCount64() - maro_compileStarted;
     if (compilation.cancelled || cancelled())
     {
         finishCancelled();
@@ -458,6 +533,7 @@ void Maro_Engine::ProcessOne(const Maro_PendingWork& work, std::stop_token stopT
         result.compilerVersion = toolchain.version;
         result.usedFallbackCompiler = toolchain.fallback;
         result.resourceLimitsApplied = compilation.resourceLimitsApplied;
+        result.maro_compileMilliseconds = maro_compileMs;
         Publish(work, std::move(result));
         return;
     }
@@ -468,10 +544,11 @@ void Maro_Engine::ProcessOne(const Maro_PendingWork& work, std::stop_token stopT
     running.generatedSource = generated.text;
     running.snippetWrapped = generated.wrapped;
     running.compilerOutput = compilation.compilerOutput;
-    running.diagnostics = analysis.diagnostics;
+    running.diagnostics = compilation.diagnostics;
     running.compilerName = toolchain.name;
     running.compilerVersion = toolchain.version;
     running.usedFallbackCompiler = toolchain.fallback;
+    running.maro_compileMilliseconds = maro_compileMs;
     Publish(work, std::move(running));
 
     Maro_ProcessRequest processRequest;
@@ -498,10 +575,35 @@ void Maro_Engine::ProcessOne(const Maro_PendingWork& work, std::stop_token stopT
     processRequest.limits.activeProcessLimit = 1;
     processRequest.limits.stdoutBytes = limits.standardOutputBytes;
     processRequest.limits.stderrBytes = limits.standardErrorBytes;
-    const Maro_ProcessResult process = Maro_RunProcess(
-        processRequest,
-        cancelled,
-        [this, &work](bool standardError, std::string_view bytes) {
+    processRequest.maro_trace = work.request.maro_trace;
+    processRequest.maro_background = work.request.maro_background;
+    processRequest.maro_traceSource = (temporary.path() /
+        (work.request.language == Maro_Language::C17 ? L"maro_UserSource.c" : L"maro_UserSource.cpp")).wstring();
+    if (work.request.maro_input)
+    {
+        processRequest.maro_interactiveInput = work.request.maro_input;
+        processRequest.maro_rollingOutput = true;
+        processRequest.maro_allowGuiWindows = true;
+        processRequest.inheritEnvironment = true;
+        processRequest.environmentOverrides.erase(L"PATH");
+        processRequest.limits.wallMilliseconds = 0;
+        processRequest.limits.cpuMilliseconds = 0;
+        processRequest.limits.memoryBytes = 0;
+        processRequest.limits.activeProcessLimit = 0;
+        processRequest.limits.maro_idleMilliseconds = 30'000;
+        const auto maro_parent = fs::path(work.request.sourcePath).parent_path();
+        std::error_code maro_error;
+        if (!maro_parent.empty() && fs::is_directory(maro_parent, maro_error))
+        {
+            processRequest.workingDirectory = maro_parent.wstring();
+        }
+    }
+    maro_DecodedStream maro_stdout(work.request.maro_outputCodePage, limits.standardOutputBytes);
+    maro_DecodedStream maro_stderr(work.request.maro_outputCodePage, limits.standardErrorBytes);
+    const auto maro_publishOutput = [this, &work, &maro_stdout, &maro_stderr](
+        bool standardError, std::string_view bytes, bool maro_final = false) {
+            auto text = (standardError ? maro_stderr : maro_stdout).maro_Decode(bytes, maro_final);
+            if (text.empty()) return;
             Maro_ResultEnvelope update = Maro_BaseEnvelope(
                 work.requestId,
                 work.request,
@@ -509,7 +611,6 @@ void Maro_Engine::ProcessOne(const Maro_PendingWork& work, std::stop_token stopT
                 Maro_Status::Pending,
                 {});
             update.executionId = work.requestId;
-            std::wstring text = Maro_SanitizeOutput(Maro_Utf8ToWide(bytes));
             if (standardError)
             {
                 update.standardError = std::move(text);
@@ -519,7 +620,14 @@ void Maro_Engine::ProcessOne(const Maro_PendingWork& work, std::stop_token stopT
                 update.standardOutput = std::move(text);
             }
             Publish(work, std::move(update));
-        });
+        };
+    const auto maro_runStarted = GetTickCount64();
+    const Maro_ProcessResult process = Maro_RunProcess(processRequest, cancelled,
+        [&](bool maro_error, std::string_view maro_bytes) { maro_publishOutput(maro_error, maro_bytes); });
+    maro_publishOutput(false, {}, true);
+    maro_publishOutput(true, {}, true);
+    maro_stdout.maro_Trim();
+    maro_stderr.maro_Trim();
     if (process.termination == Maro_ProcessTermination::Cancelled || cancelled())
     {
         finishCancelled();
@@ -532,7 +640,8 @@ void Maro_Engine::ProcessOne(const Maro_PendingWork& work, std::stop_token stopT
         process.termination == Maro_ProcessTermination::CpuTimedOut)
     {
         finalStatus = Maro_Status::TimedOut;
-        statusText = L"실행 시간이 제한을 초과해 프로세스 트리를 종료했습니다.";
+        statusText = work.request.maro_input ? L"출력 없이 30초 동안 계산이 계속되어 중지했습니다. 입력 대기는 제한하지 않습니다."
+            : L"실행 시간이 제한을 초과해 프로세스 트리를 종료했습니다.";
     }
     else if (process.termination == Maro_ProcessTermination::OutputLimit ||
              process.termination == Maro_ProcessTermination::MemoryLimit ||
@@ -565,15 +674,17 @@ void Maro_Engine::ProcessOne(const Maro_PendingWork& work, std::stop_token stopT
     result.generatedSource = generated.text;
     result.snippetWrapped = generated.wrapped;
     result.compilerOutput = compilation.compilerOutput;
-    result.standardOutput = Maro_SanitizeOutput(Maro_Utf8ToWide(process.standardOutputUtf8));
-    result.standardError = Maro_SanitizeOutput(Maro_Utf8ToWide(process.standardErrorUtf8));
-    result.diagnostics = std::move(analysis.diagnostics);
+    result.standardOutput = std::move(maro_stdout.maro_text);
+    result.standardError = std::move(maro_stderr.maro_text);
+    result.diagnostics = std::move(compilation.diagnostics);
     result.compilerName = toolchain.name;
     result.compilerVersion = toolchain.version;
     result.usedFallbackCompiler = toolchain.fallback;
     result.resourceLimitsApplied = process.jobObjectApplied;
     result.exitCode = process.exitCode;
     result.hasExitCode = process.hasExitCode;
+    result.maro_compileMilliseconds = maro_compileMs;
+    result.maro_runMilliseconds = GetTickCount64() - maro_runStarted;
     if (finalStatus == Maro_Status::Success && process.standardOutputUtf8.empty())
     {
         result.diagnostics.push_back(Maro_MakeIdeFinding(
@@ -587,4 +698,107 @@ void Maro_Engine::ProcessOne(const Maro_PendingWork& work, std::stop_token stopT
             L"프로그램이 0이 아닌 종료 코드 또는 운영체제 예외로 종료되었습니다."));
     }
     Publish(work, std::move(result));
+}
+
+void Maro_Engine::maro_ProcessProject(const Maro_PendingWork& maro_work,
+    const std::function<bool()>& maro_cancelled)
+{
+    maro_ProjectRequest maro_request;
+    maro_request.maro_projectPath = maro_work.request.maro_projectPath;
+    maro_request.maro_configuration = maro_work.request.maro_configuration;
+    maro_request.maro_platform = maro_work.request.maro_platform;
+    maro_request.maro_msbuildPath = maro_work.request.maro_msbuildPath;
+    maro_request.maro_solutionPath = maro_work.request.maro_solutionPath;
+    maro_request.maro_background = maro_work.request.maro_background && !maro_work.request.maro_trace;
+    Publish(maro_work, Maro_BaseEnvelope(maro_work.requestId, maro_work.request,
+        Maro_Phase::Analyzing, Maro_Status::Pending, L"프로젝트 빌드 중..."));
+    maro_OutputDecoder maro_buildStdout;
+    maro_OutputDecoder maro_buildStderr;
+    const auto maro_buildStarted = GetTickCount64();
+    const auto maro_project = maro_BuildProject(maro_request, maro_cancelled,
+        [this, &maro_work, &maro_buildStdout, &maro_buildStderr](bool maro_error, std::string_view maro_bytes) {
+            auto maro_text = Maro_SanitizeOutput((maro_error ? maro_buildStderr : maro_buildStdout).maro_Decode(maro_bytes));
+            if (maro_text.empty()) return;
+            auto maro_update = Maro_BaseEnvelope(maro_work.requestId, maro_work.request,
+                Maro_Phase::Analyzing, Maro_Status::Pending, {});
+            maro_update.compilerOutput = std::move(maro_text);
+            Publish(maro_work, std::move(maro_update));
+        });
+    const auto maro_buildMs = GetTickCount64() - maro_buildStarted;
+    if (maro_cancelled()) return;
+    auto maro_result = Maro_BaseEnvelope(maro_work.requestId, maro_work.request,
+        Maro_Phase::Completed, maro_project.maro_success ? Maro_Status::Success : Maro_Status::CompileFailed,
+        maro_project.maro_message);
+    maro_result.compilerOutput = maro_project.maro_buildOutput;
+    maro_result.maro_compileMilliseconds = maro_buildMs;
+    const auto maro_generated = maro_BuildGeneratedSource(maro_work.request);
+    maro_result.diagnostics = Maro_ParseCompilerDiagnostics(maro_project.maro_buildOutput,
+        maro_work.request, maro_generated, L"MSBuild", {}, maro_work.request.sourcePath);
+    if (!maro_project.maro_success || !maro_work.request.execute || maro_project.maro_executablePath.empty())
+    {
+        Publish(maro_work, std::move(maro_result));
+        return;
+    }
+    auto maro_checked = maro_result;
+    maro_checked.phase = Maro_Phase::Compiling;
+    Publish(maro_work, std::move(maro_checked));
+    auto maro_running = maro_result;
+    maro_running.phase = Maro_Phase::Running;
+    maro_running.status = Maro_Status::Pending;
+    maro_running.statusText = L"프로젝트 실행 중...";
+    maro_running.executionId = maro_work.requestId;
+    maro_running.maro_compileMilliseconds = maro_buildMs;
+    Publish(maro_work, std::move(maro_running));
+    Maro_ProcessRequest maro_process;
+    maro_process.executable = maro_project.maro_executablePath;
+    maro_process.workingDirectory = maro_project.maro_workingDirectory;
+    maro_process.arguments = maro_project.maro_arguments;
+    maro_process.environmentOverrides = maro_project.maro_environment;
+    maro_process.inheritEnvironment = maro_project.maro_inheritEnvironment;
+    maro_process.maro_interactiveInput = maro_work.request.maro_input;
+    maro_process.maro_rollingOutput = true;
+    maro_process.maro_allowGuiWindows = true;
+    maro_process.maro_trace = maro_work.request.maro_trace;
+    maro_process.maro_background = maro_work.request.maro_background;
+    maro_process.maro_traceSource = maro_work.request.sourcePath;
+    maro_process.limits = {0, 0, 0, 0, 1u << 20, 1u << 20};
+    maro_process.limits.maro_idleMilliseconds = 30'000;
+    maro_DecodedStream maro_stdout(maro_work.request.maro_outputCodePage, maro_process.limits.stdoutBytes);
+    maro_DecodedStream maro_stderr(maro_work.request.maro_outputCodePage, maro_process.limits.stderrBytes);
+    const auto maro_publishOutput = [this, &maro_work, &maro_stdout, &maro_stderr](
+        bool maro_error, std::string_view maro_bytes, bool maro_final = false) {
+            auto maro_text = (maro_error ? maro_stderr : maro_stdout).maro_Decode(maro_bytes, maro_final);
+            if (maro_text.empty()) return;
+            auto maro_update = Maro_BaseEnvelope(maro_work.requestId, maro_work.request,
+                Maro_Phase::Running, Maro_Status::Pending, {});
+            maro_update.executionId = maro_work.requestId;
+            (maro_error ? maro_update.standardError : maro_update.standardOutput) =
+                std::move(maro_text);
+            Publish(maro_work, std::move(maro_update));
+        };
+    const auto maro_runStarted = GetTickCount64();
+    const auto maro_run = Maro_RunProcess(maro_process, maro_cancelled,
+        [&](bool maro_error, std::string_view maro_bytes) { maro_publishOutput(maro_error, maro_bytes); });
+    maro_publishOutput(false, {}, true);
+    maro_publishOutput(true, {}, true);
+    maro_stdout.maro_Trim();
+    maro_stderr.maro_Trim();
+    if (maro_cancelled()) return;
+    maro_result.status = maro_run.hasExitCode && maro_run.exitCode == 0
+        ? Maro_Status::Success : Maro_Status::RuntimeFailed;
+    maro_result.statusText = maro_result.status == Maro_Status::Success ? L"정상 종료했습니다."
+        : L"프로그램 실행 실패: " + std::to_wstring(maro_run.hasExitCode ? maro_run.exitCode : maro_run.win32Error);
+    if (maro_run.termination == Maro_ProcessTermination::WallTimedOut)
+    {
+        maro_result.status = Maro_Status::TimedOut;
+        maro_result.statusText = L"출력 없이 30초 동안 계산이 계속되어 중지했습니다. 입력 대기는 제한하지 않습니다.";
+    }
+    maro_result.executionId = maro_work.requestId;
+    maro_result.hasExitCode = maro_run.hasExitCode;
+    maro_result.exitCode = maro_run.exitCode;
+    maro_result.maro_runMilliseconds = GetTickCount64() - maro_runStarted;
+    maro_result.resourceLimitsApplied = maro_run.jobObjectApplied;
+    maro_result.standardOutput = std::move(maro_stdout.maro_text);
+    maro_result.standardError = std::move(maro_stderr.maro_text);
+    Publish(maro_work, std::move(maro_result));
 }

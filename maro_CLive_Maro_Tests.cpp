@@ -443,6 +443,17 @@ void maro_TestCompilerDiagnostics(Maro_TestState& maro_state)
     maro_state.Expect(maro_semicolon(L"int main() {\r\n    int maro_value = 42\r\n    return 0;\r\n}",
         3, maro_beforeReturn, L"C2143", Maro_Language::Cpp20).range.start.line == 2,
         "C++ declarations with initializers and CRLF line endings map to the missing terminator");
+    const auto maro_crOnly = maro_semicolon(L"#include <stdio.h>\rint main() {\r    printf(\"한글\")\r    return 0;\r}",
+        4, maro_beforeReturn);
+    maro_state.Expect(maro_crOnly.range.start.line == 3 && maro_crOnly.range.start.column ==
+        Maro_WideToUtf8(L"    printf(\"한글\")").size() + 1,
+        "CR-only source preserves the missing semicolon line and UTF8 column");
+    maro_state.Expect(maro_semicolon(L"int main() {\r    puts(\"x\") // trailing\r\r/* ignored\r ignored */\r    return 0;\r}",
+        6, maro_beforeReturn).range.start.line == 2,
+        "CR-only comments and blank lines cannot displace a missing semicolon");
+    maro_state.Expect(maro_semicolon(L"int main() {\r\n    puts(\"x\");\r    return 0;\n}",
+        3, maro_beforeReturn).range.start.line == 3,
+        "mixed newline complete statements retain the compiler location");
     maro_state.Expect(maro_semicolon(L"int main() {\n    std::cout << \"hello\"\n    return 0;\n}",
         3, maro_beforeReturn, L"C2143", Maro_Language::Cpp20).range.start.line == 2,
         "C++ stream expressions identify their missing semicolon");
@@ -1072,14 +1083,32 @@ void maro_TestOptionalUpdateCheck(Maro_TestState& state)
 
 bool maro_TestDiagnosticWindow();
 bool maro_TestDeferredCommands();
+bool maro_TestSourceWindow();
 
-int main()
+int maro_RunProcessInputChild(int, char**);
+void maro_TestProcessInput(const std::function<void(bool, std::string_view)>&);
+void maro_TestProjects(const std::function<void(bool, std::string_view)>&);
+void maro_TestSourceInsight(const std::function<void(bool, std::string_view)>&);
+void maro_TestEncoding(const std::function<void(bool, std::string_view)>&);
+void maro_TestTrace(const std::function<void(bool, std::string_view)>&);
+void maro_TestDiagnosticFilter(const std::function<void(bool, std::string_view)>&);
+
+int main(int maro_argc, char** maro_argv)
 {
+    const int maro_child = maro_RunProcessInputChild(maro_argc, maro_argv);
+    if (maro_child >= 0) return maro_child;
     Maro_TestState state;
 
     try
     {
+        maro_TestSourceInsight([&state](bool maro_ok, std::string_view maro_name) { state.Expect(maro_ok, maro_name); });
+        maro_TestEncoding([&state](bool maro_ok, std::string_view maro_name) { state.Expect(maro_ok, maro_name); });
+        maro_TestTrace([&state](bool maro_ok, std::string_view maro_name) { state.Expect(maro_ok, maro_name); });
+        maro_TestDiagnosticFilter([&state](bool maro_ok, std::string_view maro_name) { state.Expect(maro_ok, maro_name); });
+        maro_TestProcessInput([&state](bool maro_ok, std::string_view maro_name) { state.Expect(maro_ok, std::string(maro_name)); });
+        maro_TestProjects([&state](bool maro_ok, std::string_view maro_name) { state.Expect(maro_ok, maro_name); });
         state.Expect(maro_TestDeferredCommands(), "400 menu commands return without querying UI services or starting work");
+        state.Expect(maro_TestSourceWindow(), "right source pane groups and navigation preserve exact source coordinates");
         state.Expect(maro_TestDiagnosticWindow(), "diagnostic pane renders split read-only views, findings, resize and reopen");
         Maro_TestUtfConversions(state);
         Maro_TestTextCoordinates(state);

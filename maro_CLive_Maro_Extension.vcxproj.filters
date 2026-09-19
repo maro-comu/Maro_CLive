@@ -19,8 +19,14 @@
     <ClCompile Include="maro_Process.cpp"><Filter>maro_Source</Filter></ClCompile>
     <ClCompile Include="maro_Analyzer.cpp"><Filter>maro_Source</Filter></ClCompile>
     <ClCompile Include="maro_Engine.cpp"><Filter>maro_Source</Filter></ClCompile>
+    <ClCompile Include="maro_Project.cpp"><Filter>maro_Source</Filter></ClCompile>
+    <ClCompile Include="maro_SourceInsight.cpp"><Filter>maro_Source</Filter></ClCompile>
+    <ClCompile Include="maro_SourceWindow.cpp"><Filter>maro_Source</Filter></ClCompile>
+    <ClCompile Include="maro_InsightWorker.cpp"><Filter>maro_Source</Filter></ClCompile>
+    <ClCompile Include="maro_Trace.cpp"><Filter>maro_Source</Filter></ClCompile>
     <ClCompile Include="maro_Update.cpp"><Filter>maro_Source</Filter></ClCompile>
     <ClCompile Include="maro_DiagnosticWindow.cpp"><Filter>maro_Source</Filter></ClCompile>
+    <ClCompile Include="maro_DiagnosticFilter.cpp"><Filter>maro_Source</Filter></ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="maro_CLive_Maro_Package.hpp"><Filter>maro_Header</Filter></ClInclude>
@@ -30,9 +36,15 @@
     <ClInclude Include="maro_Process.hpp"><Filter>maro_Header</Filter></ClInclude>
     <ClInclude Include="maro_Analyzer.hpp"><Filter>maro_Header</Filter></ClInclude>
     <ClInclude Include="maro_Engine.hpp"><Filter>maro_Header</Filter></ClInclude>
+    <ClInclude Include="maro_Project.hpp"><Filter>maro_Header</Filter></ClInclude>
+    <ClInclude Include="maro_SourceInsight.hpp"><Filter>maro_Header</Filter></ClInclude>
+    <ClInclude Include="maro_SourceWindow.hpp"><Filter>maro_Header</Filter></ClInclude>
+    <ClInclude Include="maro_InsightWorker.hpp"><Filter>maro_Header</Filter></ClInclude>
+    <ClInclude Include="maro_Trace.hpp"><Filter>maro_Header</Filter></ClInclude>
     <ClInclude Include="maro_Update.hpp"><Filter>maro_Header</Filter></ClInclude>
     <ClInclude Include="maro_OutputQueue.hpp"><Filter>maro_Header</Filter></ClInclude>
     <ClInclude Include="maro_DiagnosticWindow.hpp"><Filter>maro_Header</Filter></ClInclude>
+    <ClInclude Include="maro_DiagnosticFilter.hpp"><Filter>maro_Header</Filter></ClInclude>
   </ItemGroup>
   <ItemGroup>
     <None Include="maro_CLive_Maro_Extension.def"><Filter>maro_Package</Filter></None>

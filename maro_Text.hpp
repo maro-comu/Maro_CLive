@@ -20,3 +20,15 @@ std::size_t Maro_LineColumnToUtf16Offset(
     std::size_t oneBasedUtf8ByteColumn);
 
 std::wstring Maro_SanitizeOutput(std::wstring_view text);
+
+class maro_OutputDecoder
+{
+public:
+    explicit maro_OutputDecoder(unsigned maro_codePage = 0);
+    std::wstring maro_Decode(std::string_view maro_text, bool maro_final = false);
+
+private:
+    std::string maro_pending_;
+    unsigned maro_codePage_ = 0;
+    bool maro_started_ = false;
+};

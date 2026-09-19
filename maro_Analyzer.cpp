@@ -446,6 +446,8 @@ std::optional<Maro_SourcePosition> maro_FindMissingSemicolon(
     {
         return std::nullopt;
     }
+    const std::wstring maro_normalized = Maro_NormalizeNewlines(maro_source);
+    maro_source = maro_normalized;
     const std::wstring maro_target = maro_match[1].str();
     const std::size_t maro_lineStart = Maro_LineColumnToUtf16Offset(maro_source, maro_reported.line, 1);
     const std::size_t maro_columnOffset = Maro_LineColumnToUtf16Offset(
@@ -732,8 +734,10 @@ bool Maro_IsLeadingCommentOrBlank(std::wstring_view line, bool& inBlockComment)
 
 std::wstring Maro_CombineProcessOutput(const Maro_ProcessResult& process)
 {
-    std::wstring output = Maro_Utf8ToWide(process.standardOutputUtf8);
-    const std::wstring error = Maro_Utf8ToWide(process.standardErrorUtf8);
+    maro_OutputDecoder maro_stdout;
+    maro_OutputDecoder maro_stderr;
+    std::wstring output = maro_stdout.maro_Decode(process.standardOutputUtf8, true);
+    const std::wstring error = maro_stderr.maro_Decode(process.standardErrorUtf8, true);
     if (!output.empty() && !error.empty() && output.back() != L'\n')
     {
         output.push_back(L'\n');
@@ -810,6 +814,15 @@ std::vector<std::wstring> Maro_CompilerArguments(
         else
         {
             arguments.push_back(L"-O0");
+            if (request.maro_trace)
+            {
+                arguments.push_back(L"-g");
+                arguments.push_back(L"-gcodeview");
+                arguments.push_back(L"-Xlinker");
+                arguments.push_back(L"/DEBUG");
+                arguments.push_back(L"-Xlinker");
+                arguments.push_back(L"/PDB:" + (executablePath.parent_path() / L"maro_UserProgram.pdb").wstring());
+            }
             arguments.push_back(L"-include");
             arguments.push_back(liveOutputHeader.wstring());
         }
@@ -851,11 +864,19 @@ std::vector<std::wstring> Maro_CompilerArguments(
         else
         {
             arguments.push_back(L"/Od");
+            if (request.maro_trace) arguments.push_back(L"/Z7");
             arguments.push_back(L"/FI" + liveOutputHeader.wstring());
             arguments.push_back(L"/Fe:" + executablePath.wstring());
             arguments.push_back(L"/Fo:" + objectPath.wstring());
         }
         arguments.push_back(sourcePath.wstring());
+        if (!syntaxOnly && request.maro_trace)
+        {
+            arguments.push_back(L"/link");
+            arguments.push_back(L"/DEBUG");
+            arguments.push_back(L"/INCREMENTAL:NO");
+            arguments.push_back(L"/PDB:" + (executablePath.parent_path() / L"maro_UserProgram.pdb").wstring());
+        }
     }
     return arguments;
 }
@@ -935,6 +956,7 @@ Maro_AnalysisResult Maro_RunCompiler(
     processRequest.workingDirectory = workingDirectory.wstring();
     processRequest.environmentOverrides = toolchain.environment;
     processRequest.limits = Maro_CompilerProcessLimits(limits, syntaxOnly);
+    processRequest.maro_background = request.maro_background && !request.maro_trace;
 
     const Maro_ProcessResult process = Maro_RunProcess(processRequest, cancelled);
     result.resourceLimitsApplied = process.jobObjectApplied;
@@ -1352,11 +1374,11 @@ std::vector<Maro_Diagnostic> Maro_ParseCompilerDiagnostics(
     return diagnostics;
 }
 
-Maro_ToolchainInfo Maro_DetectToolchain()
+Maro_ToolchainInfo Maro_DetectToolchain(bool maro_msvcOnly)
 {
     const Maro_MsvcDiscovery msvc = Maro_FindMsvc();
     const Maro_SdkDiscovery sdk = Maro_FindWindowsSdk();
-    const fs::path clang = Maro_FindClang();
+    const fs::path clang = maro_msvcOnly ? fs::path{} : Maro_FindClang();
 
     Maro_ToolchainInfo info;
     if (!clang.empty())
@@ -1385,9 +1407,9 @@ Maro_ToolchainInfo Maro_DetectToolchain()
     {
         info.kind = Maro_ToolchainKind::Msvc;
         info.compilerPath = msvc.compiler;
-        info.name = L"MSVC (fallback)";
+        info.name = maro_msvcOnly ? L"MSVC" : L"MSVC (fallback)";
         info.version = msvc.msvcRoot.empty() ? L"설치됨" : msvc.msvcRoot.filename().wstring();
-        info.fallback = true;
+        info.fallback = !maro_msvcOnly;
         Maro_AddBuildEnvironment(info, msvc, sdk);
         info.environment[L"VSLANG"] = L"1033";
     }

@@ -3,7 +3,7 @@
                  xmlns="http://schemas.microsoft.com/developer/vsx-schema/2011">
   <Metadata>
     <Identity Id="CLive_Maro.c766c863-83a1-4fcf-bbf5-f26ffc83796b"
-              Version="1.2.5"
+              Version="2.1.0"
               Language="ko-KR"
               Publisher="Maro" />
     <DisplayName>CLive_Maro</DisplayName>

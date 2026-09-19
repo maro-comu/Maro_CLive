@@ -111,9 +111,15 @@
     <ClCompile Include="maro_Process.cpp" />
     <ClCompile Include="maro_Analyzer.cpp" />
     <ClCompile Include="maro_Engine.cpp" />
+    <ClCompile Include="maro_Project.cpp" />
+    <ClCompile Include="maro_SourceInsight.cpp" />
+    <ClCompile Include="maro_SourceWindow.cpp" />
+    <ClCompile Include="maro_InsightWorker.cpp" />
+    <ClCompile Include="maro_Trace.cpp" />
     <ClCompile Include="maro_VisualStudio.cpp" />
     <ClCompile Include="maro_Update.cpp" />
     <ClCompile Include="maro_DiagnosticWindow.cpp" />
+    <ClCompile Include="maro_DiagnosticFilter.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ResourceCompile Include="maro_CLive_Maro_Resources.rc" />
@@ -125,10 +131,16 @@
     <ClInclude Include="maro_Process.hpp" />
     <ClInclude Include="maro_Analyzer.hpp" />
     <ClInclude Include="maro_Engine.hpp" />
+    <ClInclude Include="maro_Project.hpp" />
+    <ClInclude Include="maro_SourceInsight.hpp" />
+    <ClInclude Include="maro_SourceWindow.hpp" />
+    <ClInclude Include="maro_InsightWorker.hpp" />
+    <ClInclude Include="maro_Trace.hpp" />
     <ClInclude Include="maro_VisualStudio.hpp" />
     <ClInclude Include="maro_Update.hpp" />
     <ClInclude Include="maro_OutputQueue.hpp" />
     <ClInclude Include="maro_DiagnosticWindow.hpp" />
+    <ClInclude Include="maro_DiagnosticFilter.hpp" />
   </ItemGroup>
   <ItemGroup>
     <None Include="maro_CLive_Maro_Extension.def" />
@@ -138,8 +150,11 @@
   </ItemGroup>
   <ItemDefinitionGroup>
     <Link>
-      <AdditionalDependencies>comctl32.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>dbghelp.lib;comctl32.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
+    <ClCompile>
+      <AdditionalIncludeDirectories>$(VSInstallDir)DIA SDK\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+    </ClCompile>
   </ItemDefinitionGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <Target Name="Maro_CompileCommandTable"

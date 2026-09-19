@@ -1,4 +1,5 @@
 #include "maro_Process.hpp"
+#include "maro_Trace.hpp"
 
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
@@ -7,6 +8,7 @@
 #define NOMINMAX
 #endif
 #include <windows.h>
+#include <tlhelp32.h>
 
 #include <algorithm>
 #include <chrono>
@@ -146,7 +148,7 @@ std::vector<wchar_t> maro_BuildEnvironmentBlock(
     return block;
 }
 
-bool Maro_ConfigureJob(HANDLE job, const Maro_ProcessLimits& limits)
+bool Maro_ConfigureJob(HANDLE job, const Maro_ProcessLimits& limits, bool maro_background)
 {
     JOBOBJECT_EXTENDED_LIMIT_INFORMATION information{};
     information.BasicLimitInformation.LimitFlags =
@@ -170,40 +172,20 @@ bool Maro_ConfigureJob(HANDLE job, const Maro_ProcessLimits& limits)
             static_cast<LONGLONG>(limits.cpuMilliseconds) * 10'000ll;
     }
 
-    return SetInformationJobObject(
+    if (!SetInformationJobObject(
         job,
         JobObjectExtendedLimitInformation,
         &information,
-        sizeof(information)) != FALSE;
-}
-
-std::size_t Maro_CompleteUtf8Prefix(std::string_view text) noexcept
-{
-    if (text.empty())
+        sizeof(information))) return false;
+    if (maro_background)
     {
-        return 0;
+        JOBOBJECT_CPU_RATE_CONTROL_INFORMATION maro_cpu{};
+        maro_cpu.ControlFlags = JOB_OBJECT_CPU_RATE_CONTROL_ENABLE | JOB_OBJECT_CPU_RATE_CONTROL_HARD_CAP;
+        maro_cpu.CpuRate = 2000;
+        if (!SetInformationJobObject(job, JobObjectCpuRateControlInformation, &maro_cpu, sizeof(maro_cpu)))
+            return false;
     }
-    std::size_t cursor = text.size();
-    std::size_t continuations = 0;
-    while (cursor != 0 &&
-           (static_cast<unsigned char>(text[cursor - 1]) & 0xc0u) == 0x80u &&
-           continuations != 4)
-    {
-        --cursor;
-        ++continuations;
-    }
-    if (continuations == 4 || cursor == 0)
-    {
-        return text.size();
-    }
-    const std::size_t lead = cursor - 1;
-    const unsigned char value = static_cast<unsigned char>(text[lead]);
-    const std::size_t expected = value >= 0xf0u && value <= 0xf4u
-        ? 4
-        : (value >= 0xe0u && value <= 0xefu
-            ? 3
-            : (value >= 0xc2u && value <= 0xdfu ? 2 : 1));
-    return continuations + 1 < expected ? lead : text.size();
+    return true;
 }
 
 void Maro_PublishProcessOutput(
@@ -230,13 +212,16 @@ void Maro_ReadPipe(
     HANDLE pipe,
     std::string& destination,
     std::size_t limit,
+    bool maro_rolling,
     std::atomic<bool>& exceeded,
     bool standardError,
     Maro_ProcessOutputCallback output,
-    std::mutex& outputMutex)
+    std::mutex& outputMutex,
+    std::atomic<ULONGLONG>& maro_lastOutput,
+    bool maro_background)
 {
+    if (maro_background) SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_BELOW_NORMAL);
     char buffer[4096];
-    std::string pending;
     for (;;)
     {
         DWORD bytesRead = 0;
@@ -244,38 +229,37 @@ void Maro_ReadPipe(
         {
             break;
         }
+        maro_lastOutput.store(GetTickCount64(), std::memory_order_relaxed);
 
         const std::size_t remaining = destination.size() < limit ? limit - destination.size() : 0;
-        const std::size_t toCopy = (std::min)(remaining, static_cast<std::size_t>(bytesRead));
+        const std::size_t toCopy = maro_rolling
+            ? static_cast<std::size_t>(bytesRead)
+            : (std::min)(remaining, static_cast<std::size_t>(bytesRead));
         try
         {
             destination.append(buffer, toCopy);
-            pending.append(buffer, toCopy);
+            if (maro_rolling && destination.size() > limit &&
+                destination.size() - limit > (std::min)(limit, std::size_t{64u << 10}))
+            {
+                destination.erase(0, destination.size() - limit);
+            }
         }
         catch (...)
         {
             exceeded.store(true, std::memory_order_release);
             break;
         }
-        const std::size_t complete = Maro_CompleteUtf8Prefix(pending);
-        if (complete != 0)
-        {
-            Maro_PublishProcessOutput(
-                standardError,
-                std::string_view(pending.data(), complete),
-                output,
-                outputMutex);
-            pending.erase(0, complete);
-        }
+        Maro_PublishProcessOutput(standardError, std::string_view(buffer, toCopy), output, outputMutex);
         if (toCopy < bytesRead)
         {
             exceeded.store(true, std::memory_order_release);
         }
     }
-    Maro_PublishProcessOutput(standardError, pending, output, outputMutex);
+    if (maro_rolling && destination.size() > limit)
+        destination.erase(0, destination.size() - limit);
 }
 
-void Maro_WritePipe(HANDLE pipe, const std::string& input)
+bool maro_WriteInput(HANDLE pipe, std::string_view input)
 {
     std::size_t offset = 0;
     while (offset < input.size())
@@ -287,12 +271,135 @@ void Maro_WritePipe(HANDLE pipe, const std::string& input)
         DWORD written = 0;
         if (!WriteFile(pipe, input.data() + offset, requested, &written, nullptr) || written == 0)
         {
-            break;
+            return false;
         }
         offset += written;
     }
-    CloseHandle(pipe);
+    return true;
 }
+
+bool maro_ThreadMayWaitForIo(HANDLE maro_thread)
+{
+    BOOL maro_pending = FALSE;
+    return !maro_thread || !GetThreadIOPendingFlag(maro_thread, &maro_pending) || maro_pending;
+}
+
+bool maro_ProcessMayWaitForIo(DWORD maro_processId, DWORD maro_primaryId)
+{
+    Maro_UniqueHandle maro_snapshot(CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0));
+    if (!maro_snapshot) return true;
+    THREADENTRY32 maro_entry{};
+    maro_entry.dwSize = sizeof(maro_entry);
+    if (!Thread32First(maro_snapshot.get(), &maro_entry)) return true;
+    unsigned maro_entries = 0, maro_owned = 0;
+    do
+    {
+        if (++maro_entries > 32768) return true;
+        if (maro_entry.th32OwnerProcessID != maro_processId || maro_entry.th32ThreadID == maro_primaryId) continue;
+        if (++maro_owned > 1024) return true;
+        Maro_UniqueHandle maro_thread(OpenThread(THREAD_QUERY_INFORMATION, FALSE, maro_entry.th32ThreadID));
+        if (maro_ThreadMayWaitForIo(maro_thread.get())) return true;
+    } while (Thread32Next(maro_snapshot.get(), &maro_entry));
+    return GetLastError() != ERROR_NO_MORE_FILES;
+}
+
+void Maro_WritePipe(
+    HANDLE pipe,
+    const std::string& input,
+    std::shared_ptr<maro_ProcessInput> maro_interactive)
+{
+    Maro_UniqueHandle maro_pipe(pipe);
+    if (!maro_WriteInput(pipe, input) || !maro_interactive)
+    {
+        return;
+    }
+    std::string maro_chunk;
+    while (maro_interactive->maro_Read(maro_chunk))
+    {
+        if (!maro_WriteInput(pipe, maro_chunk))
+        {
+            maro_interactive->maro_Close();
+            break;
+        }
+    }
+}
+}
+
+maro_ProcessInput::maro_ProcessInput(std::size_t maro_capacity)
+    : maro_capacity_(maro_capacity)
+{
+}
+
+bool maro_ProcessInput::maro_Submit(std::string_view maro_text) noexcept
+{
+    try
+    {
+        std::unique_lock maro_lock(maro_mutex_, std::try_to_lock);
+        if (!maro_lock.owns_lock() || !maro_IsOpen() ||
+            maro_text.size() > maro_capacity_ - maro_bytes_)
+        {
+            return false;
+        }
+        if (!maro_text.empty())
+        {
+            maro_pending_.emplace_back(maro_text);
+            maro_bytes_ += maro_text.size();
+            maro_changed_.notify_one();
+        }
+        return true;
+    }
+    catch (...)
+    {
+        return false;
+    }
+}
+
+void maro_ProcessInput::maro_End() noexcept
+{
+    maro_ended_.store(true, std::memory_order_release);
+    maro_changed_.notify_all();
+}
+
+void maro_ProcessInput::maro_Close() noexcept
+{
+    maro_closed_.store(true, std::memory_order_release);
+    maro_changed_.notify_all();
+}
+
+bool maro_ProcessInput::maro_IsOpen() const noexcept
+{
+    return !maro_ended_.load(std::memory_order_acquire) &&
+        !maro_closed_.load(std::memory_order_acquire);
+}
+
+bool maro_ProcessInput::maro_Claim() noexcept
+{
+    return !maro_closed_.load(std::memory_order_acquire) &&
+        !maro_claimed_.exchange(true, std::memory_order_acq_rel);
+}
+
+bool maro_ProcessInput::maro_Read(std::string& maro_text)
+{
+    std::unique_lock maro_lock(maro_mutex_);
+    for (;;)
+    {
+        if (maro_closed_.load(std::memory_order_acquire))
+        {
+            return false;
+        }
+        if (!maro_pending_.empty())
+        {
+            maro_text = std::move(maro_pending_.front());
+            maro_pending_.pop_front();
+            maro_bytes_ -= maro_text.size();
+            return true;
+        }
+        if (maro_ended_.load(std::memory_order_acquire))
+        {
+            return false;
+        }
+        maro_changed_.wait_for(maro_lock, std::chrono::milliseconds(20));
+    }
 }
 
 std::wstring Maro_QuoteWindowsArgument(std::wstring_view argument)
@@ -349,7 +456,24 @@ Maro_ProcessResult Maro_RunProcess(
     Maro_ProcessResult result;
     result.termination = Maro_ProcessTermination::StartFailed;
 
-    if (request.executable.empty())
+    if (request.maro_interactiveInput && !request.maro_interactiveInput->maro_Claim())
+    {
+        result.win32Error = ERROR_INVALID_PARAMETER;
+        return result;
+    }
+    struct maro_InputGuard
+    {
+        std::shared_ptr<maro_ProcessInput> maro_input;
+        ~maro_InputGuard()
+        {
+            if (maro_input)
+            {
+                maro_input->maro_Close();
+            }
+        }
+    } maro_inputGuard{request.maro_interactiveInput};
+
+    if (request.executable.empty() || (request.maro_trace && request.maro_traceSource.empty()))
     {
         result.win32Error = ERROR_INVALID_PARAMETER;
         return result;
@@ -378,7 +502,10 @@ Maro_ProcessResult Maro_RunProcess(
     }
 
     Maro_UniqueHandle job(CreateJobObjectW(nullptr, nullptr));
-    if (!job || !Maro_ConfigureJob(job.get(), request.limits))
+    auto maro_jobLimits = request.limits;
+    if (request.maro_trace) maro_jobLimits.cpuMilliseconds = 0;
+    const bool maro_background = request.maro_background && !request.maro_trace;
+    if (!job || !Maro_ConfigureJob(job.get(), maro_jobLimits, maro_background))
     {
         result.win32Error = GetLastError();
         return result;
@@ -386,7 +513,7 @@ Maro_ProcessResult Maro_RunProcess(
 
     STARTUPINFOEXW startup{};
     startup.StartupInfo.cb = sizeof(startup);
-    startup.StartupInfo.dwFlags = STARTF_USESTDHANDLES | STARTF_USESHOWWINDOW;
+    startup.StartupInfo.dwFlags = STARTF_USESTDHANDLES | (request.maro_allowGuiWindows ? 0 : STARTF_USESHOWWINDOW);
     startup.StartupInfo.wShowWindow = SW_HIDE;
     startup.StartupInfo.hStdInput = stdinRead.get();
     startup.StartupInfo.hStdOutput = stdoutWrite.get();
@@ -444,6 +571,8 @@ Maro_ProcessResult Maro_RunProcess(
     {
         creationFlags |= CREATE_NO_WINDOW;
     }
+    if (request.maro_trace) creationFlags |= DEBUG_ONLY_THIS_PROCESS;
+    if (maro_background) creationFlags |= BELOW_NORMAL_PRIORITY_CLASS;
 
     PROCESS_INFORMATION processInformation{};
     const BOOL created = CreateProcessW(
@@ -465,6 +594,15 @@ Maro_ProcessResult Maro_RunProcess(
 
     Maro_UniqueHandle process(processInformation.hProcess);
     Maro_UniqueHandle thread(processInformation.hThread);
+    struct maro_DebugGuard
+    {
+        DWORD maro_pid;
+        bool maro_attached;
+        ~maro_DebugGuard()
+        {
+            if (maro_attached) DebugActiveProcessStop(maro_pid);
+        }
+    } maro_debugGuard{processInformation.dwProcessId, request.maro_trace != nullptr};
     stdinRead.reset();
     stdoutWrite.reset();
     stderrWrite.reset();
@@ -483,9 +621,11 @@ Maro_ProcessResult Maro_RunProcess(
         TerminateJobObject(job.get(), result.win32Error);
         return result;
     }
-    thread.reset();
+    if (request.maro_trace || !request.maro_interactiveInput || !request.limits.maro_idleMilliseconds)
+        thread.reset();
 
     std::atomic<bool> outputExceeded{false};
+    std::atomic<ULONGLONG> maro_lastOutput{GetTickCount64()};
     std::mutex outputMutex;
     std::thread stdoutReader;
     std::thread stderrReader;
@@ -498,24 +638,27 @@ Maro_ProcessResult Maro_RunProcess(
             stdoutRead.get(),
             std::ref(result.standardOutputUtf8),
             request.limits.stdoutBytes,
+            request.maro_rollingOutput,
             std::ref(outputExceeded),
             false,
             output,
-            std::ref(outputMutex));
+            std::ref(outputMutex), std::ref(maro_lastOutput), maro_background);
         stderrReader = std::thread(
             Maro_ReadPipe,
             stderrRead.get(),
             std::ref(result.standardErrorUtf8),
             request.limits.stderrBytes,
+            request.maro_rollingOutput,
             std::ref(outputExceeded),
             true,
             output,
-            std::ref(outputMutex));
+            std::ref(outputMutex), std::ref(maro_lastOutput), maro_background);
         rawStdinWrite = stdinWrite.release();
         stdinWriter = std::thread(
             Maro_WritePipe,
             rawStdinWrite,
-            std::cref(request.standardInputUtf8));
+            std::cref(request.standardInputUtf8),
+            request.maro_interactiveInput);
         rawStdinWrite = nullptr;
     }
     catch (...)
@@ -527,6 +670,15 @@ Maro_ProcessResult Maro_RunProcess(
         result.win32Error = ERROR_NOT_ENOUGH_MEMORY;
         result.termination = Maro_ProcessTermination::InternalError;
         TerminateJobObject(job.get(), result.win32Error);
+        if (request.maro_interactiveInput)
+        {
+            request.maro_interactiveInput->maro_Close();
+        }
+        if (maro_debugGuard.maro_attached)
+        {
+            DebugActiveProcessStop(maro_debugGuard.maro_pid);
+            maro_debugGuard.maro_attached = false;
+        }
         process.reset();
         job.reset();
         if (stdinWriter.joinable())
@@ -546,7 +698,33 @@ Maro_ProcessResult Maro_RunProcess(
 
     result.termination = Maro_ProcessTermination::Exited;
     const ULONGLONG startedAt = GetTickCount64();
-    for (;;)
+    ULONGLONG maro_idleSince = startedAt, maro_sampleAt = startedAt;
+    LONGLONG maro_previousCpu = 0;
+    if (request.maro_trace)
+    {
+        const auto maro_traceResult = maro_RunDebugLoop(process.get(), processInformation.dwProcessId,
+            request.executable, request.maro_traceSource, request.maro_trace, [&] {
+                bool maro_cancel = false;
+                try { maro_cancel = cancelled && cancelled(); }
+                catch (...) { maro_cancel = true; }
+                return maro_cancel || outputExceeded.load(std::memory_order_acquire);
+            });
+        maro_debugGuard.maro_attached = false;
+        if (maro_traceResult.maro_cancelled)
+            result.termination = outputExceeded.load(std::memory_order_acquire)
+                ? Maro_ProcessTermination::OutputLimit : Maro_ProcessTermination::Cancelled;
+        else if (maro_traceResult.maro_error)
+        {
+            result.termination = Maro_ProcessTermination::InternalError;
+            result.win32Error = maro_traceResult.maro_error;
+        }
+        if (maro_traceResult.maro_exited)
+        {
+            result.hasExitCode = true;
+            result.exitCode = maro_traceResult.maro_exitCode;
+        }
+    }
+    else for (;;)
     {
         const DWORD waitResult = WaitForSingleObject(process.get(), 20);
         if (waitResult == WAIT_OBJECT_0)
@@ -592,6 +770,35 @@ Maro_ProcessResult Maro_RunProcess(
             TerminateJobObject(job.get(), WAIT_TIMEOUT);
             break;
         }
+        const ULONGLONG maro_now = GetTickCount64();
+        if (request.limits.maro_idleMilliseconds && maro_now - maro_sampleAt >= 250)
+        {
+            const auto maro_outputAt = maro_lastOutput.load(std::memory_order_relaxed);
+            maro_idleSince = (std::max)(maro_idleSince, (std::min)(maro_now, maro_outputAt));
+            JOBOBJECT_BASIC_ACCOUNTING_INFORMATION maro_accounting{};
+            const bool maro_measured = QueryInformationJobObject(job.get(), JobObjectBasicAccountingInformation,
+                &maro_accounting, sizeof(maro_accounting), nullptr) != FALSE;
+            const LONGLONG maro_cpu = maro_accounting.TotalUserTime.QuadPart + maro_accounting.TotalKernelTime.QuadPart;
+            const bool maro_waiting = request.maro_interactiveInput && request.maro_interactiveInput->maro_IsOpen() &&
+                (!maro_measured || maro_cpu - maro_previousCpu < static_cast<LONGLONG>(maro_now - maro_sampleAt) * 100 ||
+                    maro_ThreadMayWaitForIo(thread.get()));
+            const bool maro_graphics = request.maro_allowGuiWindows && GetGuiResources(process.get(), GR_GDIOBJECTS) != 0;
+            if (maro_waiting || maro_graphics) maro_idleSince = maro_now;
+            maro_previousCpu = maro_cpu;
+            maro_sampleAt = maro_now;
+            if (maro_now - maro_idleSince >= request.limits.maro_idleMilliseconds)
+            {
+                if (request.maro_interactiveInput && request.maro_interactiveInput->maro_IsOpen() &&
+                    maro_ProcessMayWaitForIo(processInformation.dwProcessId, processInformation.dwThreadId))
+                {
+                    maro_idleSince = maro_now;
+                    continue;
+                }
+                result.termination = Maro_ProcessTermination::WallTimedOut;
+                TerminateJobObject(job.get(), WAIT_TIMEOUT);
+                break;
+            }
+        }
     }
 
     WaitForSingleObject(process.get(), 2'000);
@@ -603,7 +810,7 @@ Maro_ProcessResult Maro_RunProcess(
     }
     if (result.termination == Maro_ProcessTermination::Exited &&
         result.hasExitCode && result.exitCode != 0 &&
-        request.limits.activeProcessLimit == 1 && request.limits.cpuMilliseconds > 0)
+        request.limits.activeProcessLimit == 1 && request.limits.cpuMilliseconds > 0 && !request.maro_trace)
     {
         JOBOBJECT_BASIC_ACCOUNTING_INFORMATION accounting{};
         if (QueryInformationJobObject(
@@ -623,6 +830,10 @@ Maro_ProcessResult Maro_RunProcess(
 
     process.reset();
     job.reset();
+    if (request.maro_interactiveInput)
+    {
+        request.maro_interactiveInput->maro_Close();
+    }
     if (stdinWriter.joinable())
     {
         stdinWriter.join();
@@ -637,5 +848,10 @@ Maro_ProcessResult Maro_RunProcess(
     }
     stdoutRead.reset();
     stderrRead.reset();
+    if (result.termination == Maro_ProcessTermination::Exited &&
+        outputExceeded.load(std::memory_order_acquire))
+    {
+        result.termination = Maro_ProcessTermination::OutputLimit;
+    }
     return result;
 }

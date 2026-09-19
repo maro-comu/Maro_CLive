@@ -3,6 +3,9 @@
 #include "maro_Engine.hpp"
 #include "maro_OutputQueue.hpp"
 #include "maro_DiagnosticWindow.hpp"
+#include "maro_SourceWindow.hpp"
+#include "maro_InsightWorker.hpp"
+#include "maro_Trace.hpp"
 
 #include <atlbase.h>
 #include <atlcom.h>
@@ -36,7 +39,8 @@ class ATL_NO_VTABLE Maro_CLive_Maro_Package
       public IAsyncLoadablePackageInitialize,
       public IOleCommandTarget,
       public IVsTextLinesEvents,
-      public IVsSelectionEvents
+      public IVsSelectionEvents,
+      public IVsRunningDocTableEvents
 {
 public:
     Maro_CLive_Maro_Package() = default;
@@ -51,6 +55,7 @@ public:
         COM_INTERFACE_ENTRY(IOleCommandTarget)
         COM_INTERFACE_ENTRY(IVsTextLinesEvents)
         COM_INTERFACE_ENTRY(IVsSelectionEvents)
+        COM_INTERFACE_ENTRY(IVsRunningDocTableEvents)
     END_COM_MAP()
 
     STDMETHOD(SetSite)(IServiceProvider* serviceProvider) override;
@@ -91,10 +96,22 @@ public:
         ISelectionContainer* newContainer) override;
     STDMETHOD(OnElementValueChanged)(VSSELELEMID element, VARIANT oldValue, VARIANT newValue) override;
     STDMETHOD(OnCmdUIContextChanged)(VSCOOKIE cookie, BOOL active) override;
+    STDMETHOD(OnAfterFirstDocumentLock)(VSCOOKIE, VSRDTFLAGS, DWORD, DWORD) override { return S_OK; }
+    STDMETHOD(OnBeforeLastDocumentUnlock)(VSCOOKIE, VSRDTFLAGS, DWORD, DWORD) override { return S_OK; }
+    STDMETHOD(OnAfterSave)(VSCOOKIE maro_cookie) override;
+    STDMETHOD(OnAfterAttributeChange)(VSCOOKIE, VSRDTATTRIB) override { return S_OK; }
+    STDMETHOD(OnBeforeDocumentWindowShow)(VSCOOKIE, BOOL, IVsWindowFrame*) override { return S_OK; }
+    STDMETHOD(OnAfterDocumentWindowHide)(VSCOOKIE, IVsWindowFrame*) override { return S_OK; }
 
 private:
     HRESULT InitializeUi();
     HRESULT EnsureDiagnosticWindow(bool activate, bool show = true);
+    HRESULT maro_EnsureLiveOutput(bool maro_show = true);
+    void maro_ConfigurePane(maro_DiagnosticWindow* maro_pane, bool maro_output);
+    HRESULT maro_EnsureSourceWindow(bool maro_show = true);
+    void maro_Navigate(const maro_SourceItem& maro_item);
+    void maro_RequestInsight(const Maro_SourceRequest& maro_request);
+    HRESULT maro_StartTrace();
     void SetDiagnosticPending(const std::wstring& path, const wchar_t* status);
     void ProcessUi() noexcept;
     static void CALLBACK UiTimerProc(HWND window, UINT message, UINT_PTR timer, DWORD time) noexcept;
@@ -103,6 +120,8 @@ private:
     HRESULT BindActiveBuffer();
     HRESULT maro_GetDocumentLines(IVsTextLines** maro_lines);
     HRESULT ReadActiveSource(Maro_SourceRequest& request, std::wstring& displayPath);
+    HRESULT maro_ReadProject(Maro_SourceRequest& maro_request);
+    bool maro_HasDirtyDocuments();
     HRESULT StartAnalysis(bool execute);
     HRESULT maro_SubmitSource(Maro_SourceRequest request, const std::wstring& path, bool execute, bool show);
     void maro_CancelLiveWork() noexcept;
@@ -122,6 +141,23 @@ private:
     ATL::CComPtr<IVsOutputWindowPane> runPane_;
     ATL::CComPtr<maro_DiagnosticWindow> diagnosticWindow_;
     ATL::CComPtr<IVsWindowFrame> diagnosticFrame_;
+    ATL::CComPtr<maro_DiagnosticWindow> maro_liveOutput_;
+    ATL::CComPtr<IVsWindowFrame> maro_liveOutputFrame_;
+    bool maro_creatingOutput_ = false;
+    ATL::CComPtr<maro_SourceWindow> maro_sourceWindow_;
+    ATL::CComPtr<IVsWindowFrame> maro_sourceFrame_;
+    std::unique_ptr<maro_InsightWorker> maro_insightWorker_;
+    std::optional<maro_SourceItem> maro_navigation_;
+    std::uint64_t maro_navigationVersion_ = 0;
+    std::uint64_t maro_insightVersion_ = 0, maro_insightHash_ = 0;
+    std::uint64_t maro_displayedInsightVersion_ = 0;
+    std::wstring maro_insightPath_;
+    bool maro_creatingSource_ = false;
+    bool maro_automatic_ = true;
+    unsigned maro_codePage_ = 0;
+    std::shared_ptr<maro_TraceSession> maro_trace_;
+    std::mutex maro_traceMutex_;
+    std::optional<maro_TraceSnapshot> maro_traceSnapshot_;
     bool creatingWindow_ = false;
     std::mutex diagnosticMutex_;
     std::optional<Maro_ResultEnvelope> pendingDiagnostic_;
@@ -129,12 +165,23 @@ private:
     maro_OutputQueue updateNotice_;
     ATL::CComPtr<IVsMonitorSelection> selectionMonitor_;
     ATL::CComPtr<IVsTextLines> observedLines_;
+    ATL::CComPtr<IVsRunningDocumentTable> maro_documents_;
+    VSCOOKIE maro_documentCookie_ = 0;
+    std::shared_ptr<maro_ProcessInput> maro_input_;
+    std::atomic<std::uint64_t> maro_runningVersion_{0};
+    std::atomic<std::uint64_t> maro_finishedVersion_{0};
+    bool maro_projectMode_ = false;
+    bool maro_stopped_ = false;
+    std::size_t maro_outputPaneSize_ = 0;
+    std::size_t maro_diagnosticPaneSize_ = 0;
     std::unique_ptr<Maro_Engine> diagnosticEngine_;
     std::unique_ptr<Maro_Engine> runEngine_;
     DWORD selectionCookie_ = 0;
     DWORD textCookie_ = 0;
     UINT_PTR uiTimer_ = 0;
     ULONGLONG liveDeadline_ = 0;
+    UINT maro_idleInterval_ = 100;
+    std::uint64_t maro_debounceMilliseconds_ = 1000;
     bool initialized_ = false;
     bool initializing_ = false;
     bool uiBusy_ = false;

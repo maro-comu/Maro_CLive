@@ -3,7 +3,7 @@
 "InprocServer32"="$PackageFolder$\maro_CLive_Maro.dll"
 "CompanyName"="Maro"
 "ProductName"="CLive_Maro"
-"ProductVersion"="1.2.5"
+"ProductVersion"="2.1.0"
 "MinEdition"="Community"
 "ID"=dword:00000001
 "AllowsBackgroundLoad"=dword:00000001
@@ -20,8 +20,24 @@
 
 [$RootKey$\ToolWindows\{85d62dc1-f3c5-4f1b-96f0-a679818e13ba}]
 @="{c766c863-83a1-4fcf-bbf5-f26ffc83796b}"
-"Name"="CLive_Maro"
+"Name"="CLive_Maro 디버그"
 "Orientation"="Left"
 "Style"="Linked"
 "Window"="DocumentWell"
 "DockedWidth"=dword:00000154
+
+[$RootKey$\ToolWindows\{7e10a0c6-ee3d-460c-aa5c-839a0b7d2d34}]
+@="{c766c863-83a1-4fcf-bbf5-f26ffc83796b}"
+"Name"="CLive_Maro 코드 목록"
+"Orientation"="Right"
+"Style"="Linked"
+"Window"="DocumentWell"
+"DockedWidth"=dword:0000012c
+
+[$RootKey$\ToolWindows\{3c3f69d0-7aa4-4ba2-85d8-36fa6da965c2}]
+@="{c766c863-83a1-4fcf-bbf5-f26ffc83796b}"
+"Name"="CLive_Maro 실시간 출력"
+"Orientation"="Bottom"
+"Style"="Tabbed"
+"Window"="{34e76e81-ee4a-11d0-ae2e-00a0c90fffc3}"
+"DockedHeight"=dword:000000fa

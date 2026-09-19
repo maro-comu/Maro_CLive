@@ -257,3 +257,190 @@ std::wstring Maro_SanitizeOutput(std::wstring_view text)
     }
     return result;
 }
+
+maro_OutputDecoder::maro_OutputDecoder(unsigned maro_codePage)
+    : maro_codePage_(maro_codePage)
+{
+    CPINFO maro_info{};
+    if (maro_codePage_ != 0 && maro_codePage_ != CP_UTF8 &&
+        maro_codePage_ != 1200 && maro_codePage_ != 1201 &&
+        (!GetCPInfo(maro_codePage_, &maro_info) || maro_info.MaxCharSize > 2))
+    {
+        maro_codePage_ = CP_UTF8;
+    }
+}
+
+std::wstring maro_OutputDecoder::maro_Decode(std::string_view maro_text, bool maro_final)
+{
+    maro_pending_.append(maro_text);
+    if (maro_pending_.empty())
+    {
+        return {};
+    }
+    if (!maro_started_)
+    {
+        struct maro_Bom
+        {
+            std::string_view maro_bytes;
+            unsigned maro_page;
+        };
+        constexpr maro_Bom maro_boms[] = {{"\xef\xbb\xbf", CP_UTF8}, {"\xff\xfe", 1200}, {"\xfe\xff", 1201}};
+        for (const auto& maro_bom : maro_boms)
+        {
+            if (maro_codePage_ != 0 && maro_codePage_ != maro_bom.maro_page)
+            {
+                continue;
+            }
+            if (maro_bom.maro_bytes.starts_with(maro_pending_) &&
+                maro_pending_.size() < maro_bom.maro_bytes.size() && !maro_final)
+            {
+                return {};
+            }
+            if (maro_pending_.starts_with(maro_bom.maro_bytes))
+            {
+                maro_codePage_ = maro_bom.maro_page;
+                maro_pending_.erase(0, maro_bom.maro_bytes.size());
+                break;
+            }
+        }
+        maro_started_ = true;
+    }
+    std::wstring maro_result;
+    maro_result.reserve(maro_pending_.size());
+    std::size_t maro_index = 0;
+    if (maro_codePage_ == 0 || maro_codePage_ == CP_UTF8)
+    {
+        while (maro_index < maro_pending_.size())
+        {
+            const auto maro_first = static_cast<unsigned char>(maro_pending_[maro_index]);
+            if (maro_first < 0x80)
+            {
+                maro_result.push_back(maro_first);
+                ++maro_index;
+                continue;
+            }
+            const std::size_t maro_length = maro_first >= 0xc2 && maro_first <= 0xdf ? 2 :
+                maro_first >= 0xe0 && maro_first <= 0xef ? 3 : maro_first >= 0xf0 && maro_first <= 0xf4 ? 4 : 0;
+            std::size_t maro_valid = 1;
+            char32_t maro_scalar = maro_first & (maro_length == 2 ? 0x1f : maro_length == 3 ? 0x0f : 0x07);
+            while (maro_valid < maro_length && maro_index + maro_valid < maro_pending_.size())
+            {
+                const auto maro_byte = static_cast<unsigned char>(maro_pending_[maro_index + maro_valid]);
+                if (maro_byte < 0x80 || maro_byte > 0xbf ||
+                    (maro_valid == 1 && ((maro_first == 0xe0 && maro_byte < 0xa0) ||
+                    (maro_first == 0xed && maro_byte > 0x9f) || (maro_first == 0xf0 && maro_byte < 0x90) ||
+                    (maro_first == 0xf4 && maro_byte > 0x8f))))
+                {
+                    break;
+                }
+                maro_scalar = (maro_scalar << 6) | (maro_byte & 0x3f);
+                ++maro_valid;
+            }
+            if (maro_length != 0 && maro_valid == maro_length)
+            {
+                if (maro_scalar > 0xffff)
+                {
+                    maro_scalar -= 0x10000;
+                    maro_result.push_back(static_cast<wchar_t>(0xd800 + (maro_scalar >> 10)));
+                    maro_result.push_back(static_cast<wchar_t>(0xdc00 + (maro_scalar & 0x3ff)));
+                }
+                else
+                {
+                    maro_result.push_back(static_cast<wchar_t>(maro_scalar));
+                }
+                maro_index += maro_length;
+                continue;
+            }
+            if (maro_length != 0 && maro_index + maro_valid == maro_pending_.size() && !maro_final)
+            {
+                break;
+            }
+            if (maro_codePage_ == 0)
+            {
+                maro_codePage_ = GetACP();
+                if (maro_codePage_ != CP_UTF8)
+                {
+                    break;
+                }
+            }
+            maro_result.push_back(0xfffd);
+            maro_index += maro_valid;
+        }
+    }
+    if (maro_codePage_ == 1200 || maro_codePage_ == 1201)
+    {
+        const auto maro_unit = [&](std::size_t maro_offset) {
+            const auto maro_first = static_cast<unsigned char>(maro_pending_[maro_offset]);
+            const auto maro_second = static_cast<unsigned char>(maro_pending_[maro_offset + 1]);
+            return static_cast<wchar_t>(maro_codePage_ == 1200 ? maro_first | (maro_second << 8) :
+                (maro_first << 8) | maro_second);
+        };
+        while (maro_index + 1 < maro_pending_.size())
+        {
+            const wchar_t maro_first = maro_unit(maro_index);
+            if (maro_first >= 0xd800 && maro_first <= 0xdbff)
+            {
+                if (maro_index + 3 >= maro_pending_.size() && !maro_final)
+                {
+                    break;
+                }
+                if (maro_index + 3 < maro_pending_.size())
+                {
+                    const wchar_t maro_second = maro_unit(maro_index + 2);
+                    if (maro_second >= 0xdc00 && maro_second <= 0xdfff)
+                    {
+                        maro_result.push_back(maro_first);
+                        maro_result.push_back(maro_second);
+                        maro_index += 4;
+                        continue;
+                    }
+                }
+                maro_result.push_back(0xfffd);
+            }
+            else
+            {
+                maro_result.push_back(maro_first >= 0xdc00 && maro_first <= 0xdfff ? 0xfffd : maro_first);
+            }
+            maro_index += 2;
+        }
+        if (maro_final && maro_index < maro_pending_.size())
+        {
+            maro_result.push_back(0xfffd);
+            maro_index = maro_pending_.size();
+        }
+    }
+    else if (maro_codePage_ != 0 && maro_codePage_ != CP_UTF8)
+    {
+        const std::size_t maro_start = maro_index;
+        while (maro_index < maro_pending_.size())
+        {
+            const bool maro_lead = IsDBCSLeadByteEx(maro_codePage_,
+                static_cast<BYTE>(maro_pending_[maro_index])) != FALSE;
+            if (maro_lead && maro_index + 1 == maro_pending_.size() && !maro_final)
+            {
+                break;
+            }
+            maro_index += maro_lead && maro_index + 1 < maro_pending_.size() ? 2 : 1;
+        }
+        const auto maro_count = maro_index - maro_start;
+        if (maro_count != 0 && maro_count <= static_cast<std::size_t>(std::numeric_limits<int>::max()))
+        {
+            const char* maro_data = maro_pending_.data() + maro_start;
+            const int maro_length = static_cast<int>(maro_count);
+            const int maro_required = MultiByteToWideChar(maro_codePage_, 0, maro_data, maro_length, nullptr, 0);
+            if (maro_required > 0)
+            {
+                const auto maro_offset = maro_result.size();
+                maro_result.resize(maro_offset + static_cast<std::size_t>(maro_required));
+                MultiByteToWideChar(maro_codePage_, 0, maro_data, maro_length,
+                    maro_result.data() + maro_offset, maro_required);
+            }
+            else
+            {
+                maro_result.append(maro_count, 0xfffd);
+            }
+        }
+    }
+    maro_pending_.erase(0, maro_index);
+    return maro_result;
+}
