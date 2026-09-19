@@ -135,7 +135,7 @@ Maro_Diagnostic Maro_MakeIdeFinding(
     diagnostic.findingId = L"Maro_IDE_" + std::to_wstring(request.sourceVersion) + L"_" + code;
     diagnostic.code = std::move(code);
     diagnostic.analyzer = L"CLive_Maro";
-    diagnostic.analyzerVersion = L"2.1.0";
+    diagnostic.analyzerVersion = L"2.2.0";
     diagnostic.severity = severity;
     diagnostic.evidence = evidence;
     diagnostic.friendlyMessage = std::move(message);
@@ -685,6 +685,8 @@ void Maro_Engine::ProcessOne(const Maro_PendingWork& work, std::stop_token stopT
     result.hasExitCode = process.hasExitCode;
     result.maro_compileMilliseconds = maro_compileMs;
     result.maro_runMilliseconds = GetTickCount64() - maro_runStarted;
+    if (finalStatus == Maro_Status::TimedOut)
+        result.diagnostics.push_back(maro_MakeTimeoutDiagnostic(work.request));
     if (finalStatus == Maro_Status::Success && process.standardOutputUtf8.empty())
     {
         result.diagnostics.push_back(Maro_MakeIdeFinding(
@@ -792,6 +794,7 @@ void Maro_Engine::maro_ProcessProject(const Maro_PendingWork& maro_work,
     {
         maro_result.status = Maro_Status::TimedOut;
         maro_result.statusText = L"출력 없이 30초 동안 계산이 계속되어 중지했습니다. 입력 대기는 제한하지 않습니다.";
+        maro_result.diagnostics.push_back(maro_MakeTimeoutDiagnostic(maro_work.request, true));
     }
     maro_result.executionId = maro_work.requestId;
     maro_result.hasExitCode = maro_run.hasExitCode;

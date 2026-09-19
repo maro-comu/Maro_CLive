@@ -47,6 +47,7 @@ struct Maro_CompilationResult : Maro_AnalysisResult
 };
 
 bool Maro_HasMain(std::wstring_view source);
+Maro_Diagnostic maro_MakeTimeoutDiagnostic(const Maro_SourceRequest& maro_request, bool maro_project = false);
 Maro_GeneratedSource maro_BuildGeneratedSource(const Maro_SourceRequest& request);
 
 Maro_SourcePosition Maro_MapGeneratedPosition(

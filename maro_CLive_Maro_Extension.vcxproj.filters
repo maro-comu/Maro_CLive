@@ -32,6 +32,7 @@
     <ClInclude Include="maro_CLive_Maro_Package.hpp"><Filter>maro_Header</Filter></ClInclude>
     <ClInclude Include="maro_VisualStudio.hpp"><Filter>maro_Header</Filter></ClInclude>
     <ClInclude Include="maro_Models.hpp"><Filter>maro_Header</Filter></ClInclude>
+    <ClInclude Include="maro_FixApply.hpp"><Filter>maro_Header</Filter></ClInclude>
     <ClInclude Include="maro_Text.hpp"><Filter>maro_Header</Filter></ClInclude>
     <ClInclude Include="maro_Process.hpp"><Filter>maro_Header</Filter></ClInclude>
     <ClInclude Include="maro_Analyzer.hpp"><Filter>maro_Header</Filter></ClInclude>

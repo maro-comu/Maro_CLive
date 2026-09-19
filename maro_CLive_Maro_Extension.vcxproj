@@ -127,6 +127,7 @@
   <ItemGroup>
     <ClInclude Include="maro_CLive_Maro_Package.hpp" />
     <ClInclude Include="maro_Models.hpp" />
+    <ClInclude Include="maro_FixApply.hpp" />
     <ClInclude Include="maro_Text.hpp" />
     <ClInclude Include="maro_Process.hpp" />
     <ClInclude Include="maro_Analyzer.hpp" />

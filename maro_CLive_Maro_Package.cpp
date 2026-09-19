@@ -4,6 +4,7 @@
 #include "maro_Update.hpp"
 #include "maro_Process.hpp"
 #include "maro_DiagnosticFilter.hpp"
+#include "maro_FixApply.hpp"
 
 #include <filesystem>
 #include <new>
@@ -231,6 +232,12 @@ void Maro_CLive_Maro_Package::ProcessUi() noexcept
                 runPane_->Clear();
             }
             const DWORD maro_commands = maro_pendingCommands_.exchange(0);
+            if (maro_pendingFix_)
+            {
+                auto maro_fix = std::move(*maro_pendingFix_);
+                maro_pendingFix_.reset();
+                maro_ApplyFix(maro_fix);
+            }
             HRESULT maro_commandResult = S_OK;
             if ((maro_commands & 16) != 0)
             {
@@ -303,7 +310,6 @@ void Maro_CLive_Maro_Package::ProcessUi() noexcept
                 auto maro_snapshot = maro_insightWorker_->maro_Take();
                 if (maro_snapshot && maro_snapshot->maro_version == maro_insightVersion_)
                 {
-                    if (diagnosticWindow_) diagnosticWindow_->maro_SetSource(maro_snapshot->maro_insight);
                     if (maro_liveOutput_) maro_liveOutput_->maro_SetSource(maro_snapshot->maro_insight);
                     if (maro_sourceWindow_) maro_sourceWindow_->maro_SetSource(std::move(maro_snapshot->maro_insight));
                     maro_displayedInsightVersion_ = maro_insightVersion_;
@@ -312,7 +318,6 @@ void Maro_CLive_Maro_Package::ProcessUi() noexcept
             {
                 std::optional<maro_TraceSnapshot> maro_snapshot;
                 { std::lock_guard maro_lock(maro_traceMutex_); maro_snapshot.swap(maro_traceSnapshot_); }
-                if (maro_snapshot && diagnosticWindow_) diagnosticWindow_->maro_SetTrace(*maro_snapshot);
                 if (maro_snapshot && maro_liveOutput_) maro_liveOutput_->maro_SetTrace(*maro_snapshot);
             }
             std::optional<Maro_ResultEnvelope> snapshot;
@@ -414,7 +419,7 @@ HRESULT Maro_CLive_Maro_Package::EnsureDiagnosticWindow(bool activate, bool show
                 BOOL defaultPosition = FALSE;
                 result = shell->CreateToolWindow(CTW_fInitNew, 0,
                     static_cast<IVsWindowPane*>(pane), GUID_NULL, maro_DiagnosticWindowGuid,
-                    GUID_NULL, serviceProvider_, L"CLive_Maro 디버그", &defaultPosition, &diagnosticFrame_);
+                    GUID_NULL, serviceProvider_, L"CLive_Maro 실시간 진단", &defaultPosition, &diagnosticFrame_);
                 if (FAILED(result))
                 {
                     diagnosticWindow_.Release();
@@ -437,7 +442,16 @@ HRESULT Maro_CLive_Maro_Package::EnsureDiagnosticWindow(bool activate, bool show
 void Maro_CLive_Maro_Package::maro_ConfigurePane(maro_DiagnosticWindow* maro_pane, bool maro_output)
 {
     maro_pane->maro_SetOutputMode(maro_output);
-    if (!maro_output) maro_pane->maro_SetExpandCallback([this] { maro_pendingCommands_.fetch_or(256); });
+    if (!maro_output)
+    {
+        maro_pane->maro_SetFixCallback([this](const Maro_Diagnostic& maro_diagnostic) {
+            if (!shuttingDown_ && maro_diagnostic.sourceVersion == diagnosticSourceVersion_.load())
+                maro_pendingFix_ = maro_diagnostic;
+            else if (!shuttingDown_)
+                updateNotice_.Push(L"진단이 갱신되었습니다. 새 해결책을 확인하세요.");
+        });
+        return;
+    }
     maro_pane->maro_SetRunCallback([this] { maro_pendingCommands_.fetch_or(2); });
     maro_pane->maro_SetSessionCallbacks([this](std::wstring maro_text) {
         if (shuttingDown_ || !maro_input_ || runDiagnosticVersion_.load() == 0 ||
@@ -594,6 +608,46 @@ void Maro_CLive_Maro_Package::maro_Navigate(const maro_SourceItem& maro_item)
         maro_view->SetCaretPos(maro_line, maro_column);
         maro_view->EnsureSpanVisible(TextSpan{maro_line, maro_column, maro_line, maro_column});
     }
+}
+
+void Maro_CLive_Maro_Package::maro_ApplyFix(const Maro_Diagnostic& maro_diagnostic)
+{
+    const auto maro_reject = [this] { updateNotice_.Push(L"코드가 변경되었거나 수정 위치를 확인할 수 없습니다. 새 진단을 확인하세요."); };
+    ATL::CComPtr<IVsTextLines> maro_lines;
+    std::wstring maro_path;
+    DWORD maro_flags = 0;
+    long maro_endLine = 0, maro_endColumn = 0, maro_size = 0;
+    ATL::CComBSTR maro_text;
+    if (shuttingDown_ || FAILED(maro_GetDocumentLines(&maro_lines)) || !maro_lines ||
+        !maro_ReadSourcePath(maro_lines, maro_path) || FAILED(maro_lines->GetStateFlags(&maro_flags)) ||
+        (maro_flags & (BSF_USER_READONLY | BSF_FILESYS_READONLY)) ||
+        FAILED(maro_lines->GetSize(&maro_size)) || maro_size < 0 || maro_size > 8 * 1024 * 1024 ||
+        FAILED(maro_lines->GetLastLineIndex(&maro_endLine, &maro_endColumn)) ||
+        FAILED(maro_lines->GetLineText(0, 0, maro_endLine, maro_endColumn, &maro_text)))
+    {
+        maro_reject();
+        return;
+    }
+    const auto maro_position = maro_ValidateSemicolonEdit(maro_fixSource_, maro_diagnostic,
+        diagnosticSourceVersion_.load(), maro_path, std::wstring_view(maro_text.m_str ? maro_text.m_str : L"", maro_text.Length()));
+    if (!maro_position) { maro_reject(); return; }
+    const auto maro_line = static_cast<long>(maro_position->line - 1);
+    const auto maro_column = static_cast<long>(maro_position->column - 1);
+    if (FAILED(maro_lines->CanReplaceLines(maro_line, maro_column, maro_line, maro_column, 1)))
+    {
+        maro_reject();
+        return;
+    }
+    TextSpan maro_changed{};
+    if (FAILED(maro_lines->ReplaceLines(maro_line, maro_column, maro_line, maro_column, L";", 1, &maro_changed)))
+    {
+        maro_reject();
+        return;
+    }
+    maro_CancelLiveWork();
+    lastLiveHash_ = 0;
+    ScheduleLiveAnalysis();
+    updateNotice_.Push(L"';'를 추가했습니다. Ctrl+Z로 되돌릴 수 있습니다.");
 }
 
 HRESULT Maro_CLive_Maro_Package::maro_StartTrace()
@@ -1253,6 +1307,9 @@ HRESULT Maro_CLive_Maro_Package::maro_SubmitSource(
     request.maro_outputCodePage = maro_codePage_;
     if (request.maro_trace) maro_trace_ = request.maro_trace;
     SetDiagnosticPending(path, L"검사 중...");
+    maro_fixSource_.sourcePath = request.sourcePath;
+    maro_fixSource_.sourceText = request.sourceText;
+    maro_fixSource_.sourceVersion = request.sourceVersion;
     diagnosticOutput_.maro_Reset(request.sourceVersion);
     diagnosticPane_->Clear();
     runPane_->Clear();
@@ -1322,10 +1379,10 @@ void Maro_CLive_Maro_Package::RunUpdate() noexcept
     const HRESULT initialized = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
     try
     {
-        const auto check = maro_CheckForUpdate({2, 1, 0}, &updateCancelled_);
+        const auto check = maro_CheckForUpdate({2, 2, 0}, &updateCancelled_);
         if (check.status == Maro_UpdateCheckStatus::Current)
         {
-            QueueUpdateMessage(L"최신 버전입니다. (v2.1.0)\r\n");
+            QueueUpdateMessage(L"최신 버전입니다. (v2.2.0)\r\n");
         }
         else if (check.status == Maro_UpdateCheckStatus::Failed)
         {
@@ -1437,8 +1494,7 @@ void Maro_CLive_Maro_Package::PublishRunResult(const Maro_ResultEnvelope& result
             diagnosticOutput_.maro_PushVersion(result.sourceVersion, result.compilerOutput);
             Maro_ResultEnvelope maro_progress;
             maro_progress.sourceVersion = result.sourceVersion;
-            maro_progress.statusText = L"프로젝트 빌드 중...\r\n" +
-                result.compilerOutput.substr(result.compilerOutput.size() > 2048 ? result.compilerOutput.size() - 2048 : 0);
+            maro_progress.statusText = L"프로젝트 빌드 중...";
             std::lock_guard maro_lock(diagnosticMutex_);
             if (result.sourceVersion == diagnosticSourceVersion_.load()) pendingDiagnostic_ = std::move(maro_progress);
         }

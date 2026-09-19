@@ -4,6 +4,7 @@
 #include <atlcom.h>
 #include <vsshell.h>
 #include <functional>
+#include <optional>
 
 inline const GUID maro_SourceWindowGuid =
     {0x7e10a0c6,0xee3d,0x460c,{0xaa,0x5c,0x83,0x9a,0x0b,0x7d,0x2d,0x34}};
@@ -25,10 +26,13 @@ public:
     void maro_SetNavigate(std::function<void(const maro_SourceItem&)> maro_callback) { maro_navigate_=std::move(maro_callback); }
 private:
     static LRESULT CALLBACK maro_Proc(HWND,UINT,WPARAM,LPARAM) noexcept;
+    static LRESULT CALLBACK maro_TreeProc(HWND,UINT,WPARAM,LPARAM,UINT_PTR,DWORD_PTR) noexcept;
+    void maro_Click(POINT maro_point);
     void maro_Rebuild();
     HWND maro_window_=nullptr, maro_tree_=nullptr;
     HFONT maro_font_=nullptr;
     maro_SourceInsight maro_insight_;
     std::function<void(const maro_SourceItem&)> maro_navigate_;
+    std::optional<POINT> maro_clickPoint_;
     bool maro_updating_=false;
 };

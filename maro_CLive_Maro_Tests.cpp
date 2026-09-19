@@ -392,10 +392,8 @@ void maro_TestCompilerDiagnostics(Maro_TestState& maro_state)
     {
         maro_state.Expect(maro_clang[0].code == L"-Wunused-variable",
             "Clang warning-option codes are preserved");
-        maro_state.Expect(maro_clang[0].fix && maro_clang[0].fix->edits.size() == 1 &&
-                maro_clang[0].fix->edits[0].replacement == L"maro_replaced" &&
-                maro_clang[0].fix->edits[0].startOffsetUtf16 == 4,
-            "only snapshot fix-its can modify the current user buffer");
+        maro_state.Expect(!maro_clang[0].fix,
+            "arbitrary compiler replacements are not exposed as one-click fixes");
         maro_state.Expect(maro_clang[1].code == L"CPP-SYN-1001" &&
                 maro_clang[1].range.start.line == 1 && !maro_clang[1].range.generated,
             "code-less compiler errors retain a stable fallback code and valid user location");
@@ -423,8 +421,8 @@ void maro_TestCompilerDiagnostics(Maro_TestState& maro_state)
         maro_english.code == L"C2143" && maro_english.originalDiagnostic.find(L"(4,1)") != std::wstring::npos,
         "missing semicolon points to the actual statement while preserving the compiler location and code");
     maro_state.Expect(maro_english.range.start.column ==
-        Maro_WideToUtf8(L"    printf(\"나는야 몽몽이\")").size() + 1,
-        "missing-semicolon insertion columns preserve UTF-8 coordinates for Korean source text");
+        std::wstring_view(L"    printf(\"나는야 몽몽이\")").size() + 1,
+        "missing-semicolon insertion columns use editor UTF16 coordinates for Korean text");
     const auto maro_korean = maro_semicolon(maro_missing, 4, L"구문 오류: ';'이(가) 'return' 앞에 없습니다.");
     maro_state.Expect(maro_korean.range.start.line == 3 &&
         maro_korean.friendlyMessage.starts_with(L"문장 끝에 ';'가 필요합니다."),
@@ -446,8 +444,8 @@ void maro_TestCompilerDiagnostics(Maro_TestState& maro_state)
     const auto maro_crOnly = maro_semicolon(L"#include <stdio.h>\rint main() {\r    printf(\"한글\")\r    return 0;\r}",
         4, maro_beforeReturn);
     maro_state.Expect(maro_crOnly.range.start.line == 3 && maro_crOnly.range.start.column ==
-        Maro_WideToUtf8(L"    printf(\"한글\")").size() + 1,
-        "CR-only source preserves the missing semicolon line and UTF8 column");
+        std::wstring_view(L"    printf(\"한글\")").size() + 1,
+        "CR-only source preserves the missing semicolon line and editor column");
     maro_state.Expect(maro_semicolon(L"int main() {\r    puts(\"x\") // trailing\r\r/* ignored\r ignored */\r    return 0;\r}",
         6, maro_beforeReturn).range.start.line == 2,
         "CR-only comments and blank lines cannot displace a missing semicolon");
@@ -1092,6 +1090,7 @@ void maro_TestSourceInsight(const std::function<void(bool, std::string_view)>&);
 void maro_TestEncoding(const std::function<void(bool, std::string_view)>&);
 void maro_TestTrace(const std::function<void(bool, std::string_view)>&);
 void maro_TestDiagnosticFilter(const std::function<void(bool, std::string_view)>&);
+void maro_TestSafeFixes(const std::function<void(bool, std::string_view)>&);
 
 int main(int maro_argc, char** maro_argv)
 {
@@ -1105,6 +1104,7 @@ int main(int maro_argc, char** maro_argv)
         maro_TestEncoding([&state](bool maro_ok, std::string_view maro_name) { state.Expect(maro_ok, maro_name); });
         maro_TestTrace([&state](bool maro_ok, std::string_view maro_name) { state.Expect(maro_ok, maro_name); });
         maro_TestDiagnosticFilter([&state](bool maro_ok, std::string_view maro_name) { state.Expect(maro_ok, maro_name); });
+        maro_TestSafeFixes([&state](bool maro_ok, std::string_view maro_name) { state.Expect(maro_ok, maro_name); });
         maro_TestProcessInput([&state](bool maro_ok, std::string_view maro_name) { state.Expect(maro_ok, std::string(maro_name)); });
         maro_TestProjects([&state](bool maro_ok, std::string_view maro_name) { state.Expect(maro_ok, maro_name); });
         state.Expect(maro_TestDeferredCommands(), "400 menu commands return without querying UI services or starting work");

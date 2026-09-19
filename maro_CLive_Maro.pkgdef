@@ -3,7 +3,7 @@
 "InprocServer32"="$PackageFolder$\maro_CLive_Maro.dll"
 "CompanyName"="Maro"
 "ProductName"="CLive_Maro"
-"ProductVersion"="2.1.0"
+"ProductVersion"="2.2.0"
 "MinEdition"="Community"
 "ID"=dword:00000001
 "AllowsBackgroundLoad"=dword:00000001
@@ -20,7 +20,7 @@
 
 [$RootKey$\ToolWindows\{85d62dc1-f3c5-4f1b-96f0-a679818e13ba}]
 @="{c766c863-83a1-4fcf-bbf5-f26ffc83796b}"
-"Name"="CLive_Maro 디버그"
+"Name"="CLive_Maro 실시간 진단"
 "Orientation"="Left"
 "Style"="Linked"
 "Window"="DocumentWell"

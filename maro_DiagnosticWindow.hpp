@@ -54,6 +54,7 @@ public:
     void maro_SetExpandCallback(std::function<void()> maro_expand);
     void maro_ToggleExpanded();
     void maro_SetRunCallback(std::function<void()> maro_run);
+    void maro_SetFixCallback(std::function<void(const Maro_Diagnostic&)> maro_fix);
 
 private:
     static LRESULT CALLBACK maro_WindowProc(HWND window, UINT message, WPARAM wparam, LPARAM lparam) noexcept;
@@ -70,7 +71,6 @@ private:
     void maro_SubmitInput(HWND maro_parent);
     bool maro_HandleCommand(HWND maro_parent, WPARAM maro_command);
     bool maro_HandleKey(HWND maro_parent, WPARAM maro_key);
-    void maro_RefreshDebug();
     void maro_SelectHistory(std::size_t maro_index);
     const maro_TraceSnapshot& maro_VisibleTrace() const;
     void maro_DrawButton(const DRAWITEMSTRUCT& maro_item);
@@ -82,6 +82,9 @@ private:
     bool maro_CreateControls();
     void maro_Layout();
     void maro_Refresh();
+    bool maro_CanInput() const;
+    std::optional<std::size_t> maro_HitFix(POINT maro_point) const;
+    void maro_InvokeFix(std::size_t maro_index);
     void maro_UpdateFont();
 
     HWND maro_window_ = nullptr;
@@ -98,6 +101,7 @@ private:
     int maro_splitY_ = 0;
     bool maro_running_ = false;
     bool maro_inputOpen_ = false;
+    bool maro_inputSubmitted_ = false;
     bool maro_closing_ = false;
     bool maro_projectMode_ = false;
     bool maro_automatic_ = true;
@@ -122,6 +126,10 @@ private:
     std::function<void()> maro_continueTrace_;
     std::function<void()> maro_expandCallback_;
     std::function<void()> maro_runCallback_;
+    std::function<void(const Maro_Diagnostic&)> maro_applyFix_;
+    struct maro_FixLink { long maro_start; long maro_end; Maro_Diagnostic maro_diagnostic; };
+    std::vector<maro_FixLink> maro_fixLinks_;
+    std::optional<std::size_t> maro_pressedFix_;
     std::wstring maro_path_;
     std::wstring maro_output_;
     std::wstring maro_status_ = L"C/C++ 문서를 열어 주세요.";

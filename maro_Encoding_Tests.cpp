@@ -14,11 +14,12 @@
 
 namespace
 {
-bool maro_CheckEncodingSplits(std::string_view maro_bytes, std::wstring_view maro_expected, unsigned maro_page)
+bool maro_CheckEncodingSplits(std::string_view maro_bytes, std::wstring_view maro_expected, unsigned maro_page,
+    unsigned maro_fallback = 0)
 {
     for (std::size_t maro_split = 0; maro_split <= maro_bytes.size(); ++maro_split)
     {
-        maro_OutputDecoder maro_decoder(maro_page);
+        maro_OutputDecoder maro_decoder(maro_page, maro_fallback);
         std::wstring maro_result = maro_decoder.maro_Decode(maro_bytes.substr(0, maro_split));
         maro_result += maro_decoder.maro_Decode(maro_bytes.substr(maro_split));
         maro_result += maro_decoder.maro_Decode({}, true);
@@ -27,7 +28,7 @@ bool maro_CheckEncodingSplits(std::string_view maro_bytes, std::wstring_view mar
             return false;
         }
     }
-    maro_OutputDecoder maro_decoder(maro_page);
+    maro_OutputDecoder maro_decoder(maro_page, maro_fallback);
     std::wstring maro_result;
     for (std::size_t maro_index = 0; maro_index < maro_bytes.size(); ++maro_index)
     {
@@ -70,8 +71,28 @@ void maro_TestEncoding(const std::function<void(bool, std::string_view)>& maro_e
     const auto maro_cp949 = maro_EncodePage(maro_hangul, 949);
     maro_expect(!maro_cp949.empty() && maro_CheckEncodingSplits(maro_cp949, maro_hangul, 949),
         "CP949 Hangul survives every DBCS lead-byte boundary");
+    maro_expect(!maro_cp949.empty() && maro_CheckEncodingSplits(maro_cp949, maro_hangul, 0, 1252),
+        "automatic Korean CP949 detection does not depend on a Korean Windows locale");
+    maro_expect(!maro_cp949.empty() && maro_CheckEncodingSplits(maro_cp949, maro_hangul, 0, CP_UTF8),
+        "automatic Korean CP949 detection works with Windows UTF8 system locale");
+    maro_expect(maro_CheckEncodingSplits(maro_EncodePage(L"한", 949), L"한", 0, 1252),
+        "a final single Korean syllable is decoded even on Western Windows");
+    maro_expect(maro_CheckEncodingSplits(maro_EncodePage(L"값: ", 949), L"값: ", 0, 1252),
+        "a Korean CP949 input prompt is recognized before its ASCII boundary");
+    maro_expect(maro_CheckEncodingSplits(maro_EncodePage(L"똠방각하", 949), L"똠방각하", 0, 1252),
+        "extended CP949 syllables are detected beyond the EUC-KR subset");
+    maro_expect(maro_CheckEncodingSplits(maro_utf8, maro_unicode, 0, 1252),
+        "UTF8 Korean and emoji remain preferred over the Western fallback page");
+    maro_expect(maro_CheckEncodingSplits("\xef\xbb\xbf" + maro_utf8, maro_unicode, 0, 949),
+        "an explicit UTF8 BOM remains authoritative over Korean legacy fallback");
     maro_expect(maro_CheckEncodingSplits(std::string("caf\xe9 \x80"), L"caf\u00e9 \u20ac", 1252),
         "explicit Windows1252 output retains accented letters and euro");
+    maro_expect(maro_CheckEncodingSplits(std::string("caf\xe9 \x80"), L"caf\u00e9 \u20ac", 0, 1252),
+        "automatic legacy detection retains Western text when it is not CP949 Hangul");
+    maro_expect(maro_CheckEncodingSplits(std::string("\xc7\xd1"), L"\u00c7\u00d1", 1252, 949),
+        "an explicit Western encoding is never overridden by the Korean heuristic");
+    maro_expect(maro_CheckEncodingSplits(std::string("A\x80"), L"A\ufffd", 0, 999999),
+        "an invalid fallback page replaces malformed input safely");
     const unsigned maro_acp = GetACP();
     const std::wstring maro_ansiText = maro_acp == 949 ? L"가나다" : maro_acp == CP_UTF8 ? maro_hangul : L"caf\u00e9";
     const auto maro_ansiBytes = maro_EncodePage(maro_ansiText, maro_acp);

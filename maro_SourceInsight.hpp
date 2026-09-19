@@ -31,11 +31,21 @@ struct maro_SourceLineInsight
     std::size_t maro_line = 1;
 };
 
+enum class maro_InputPolicy
+{
+    maro_None,
+    maro_SingleLine,
+    maro_Persistent,
+    maro_Unknown
+};
+
 struct maro_SourceInsight
 {
     std::wstring maro_path;
     std::vector<maro_SourceItem> maro_items;
     std::vector<maro_SourceLineInsight> maro_lines;
+    maro_InputPolicy maro_inputPolicy = maro_InputPolicy::maro_None;
+    bool maro_inputAcceptsEmptyLine = false;
     bool maro_truncated = false;
 };
 

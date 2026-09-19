@@ -1,6 +1,38 @@
 #include "maro_SourceWindow.hpp"
 #include <commctrl.h>
 #include <algorithm>
+#include <windowsx.h>
+
+LRESULT CALLBACK maro_SourceWindow::maro_TreeProc(HWND maro_window, UINT maro_message, WPARAM maro_wparam,
+    LPARAM maro_lparam, UINT_PTR maro_id, DWORD_PTR maro_data) noexcept
+{
+    auto* maro_self = reinterpret_cast<maro_SourceWindow*>(maro_data);
+    if (maro_message == WM_NCDESTROY) RemoveWindowSubclass(maro_window, maro_TreeProc, maro_id);
+    if (maro_message == WM_LBUTTONDOWN)
+    {
+        const auto maro_previous = maro_self->maro_clickPoint_;
+        maro_self->maro_clickPoint_ = POINT{GET_X_LPARAM(maro_lparam), GET_Y_LPARAM(maro_lparam)};
+        const auto maro_result = DefSubclassProc(maro_window, maro_message, maro_wparam, maro_lparam);
+        maro_self->maro_clickPoint_ = maro_previous;
+        return maro_result;
+    }
+    return DefSubclassProc(maro_window, maro_message, maro_wparam, maro_lparam);
+}
+
+void maro_SourceWindow::maro_Click(POINT maro_point)
+{
+    if (maro_updating_ || !maro_navigate_) return;
+    TVHITTESTINFO maro_hit{};
+    maro_hit.pt = maro_point;
+    if (!TreeView_HitTest(maro_tree_, &maro_hit) || !(maro_hit.flags & (TVHT_ONITEMLABEL | TVHT_ONITEMICON))) return;
+    TVITEMW maro_item{};
+    maro_item.hItem = maro_hit.hItem;
+    maro_item.mask = TVIF_PARAM;
+    if (!TreeView_GetItem(maro_tree_, &maro_item) || maro_item.lParam <= 0 ||
+        static_cast<std::size_t>(maro_item.lParam) > maro_insight_.maro_items.size()) return;
+    const auto maro_selected = maro_insight_.maro_items[maro_item.lParam - 1];
+    maro_navigate_(maro_selected);
+}
 
 STDMETHODIMP maro_SourceWindow::CreatePaneWindow(HWND maro_parent,int maro_x,int maro_y,int maro_width,int maro_height,HWND* maro_window)
 {
@@ -94,9 +126,10 @@ LRESULT CALLBACK maro_SourceWindow::maro_Proc(HWND maro_window,UINT maro_message
                 INITCOMMONCONTROLSEX maro_controls{sizeof(maro_controls),ICC_TREEVIEW_CLASSES};
                 InitCommonControlsEx(&maro_controls);
                 maro_self->maro_tree_=CreateWindowExW(0,WC_TREEVIEWW,L"라이브러리 · 헤더파일 · 함수 · 변수",
-                    WS_CHILD|WS_VISIBLE|WS_TABSTOP|TVS_HASBUTTONS|TVS_LINESATROOT|TVS_SHOWSELALWAYS|TVS_INFOTIP,
+                    WS_CHILD|WS_VISIBLE|WS_TABSTOP|TVS_HASBUTTONS|TVS_LINESATROOT|TVS_SHOWSELALWAYS|TVS_INFOTIP|TVS_DISABLEDRAGDROP,
                     0,0,1,1,maro_window,reinterpret_cast<HMENU>(201),ATL::_AtlBaseModule.GetModuleInstance(),nullptr);
                 if(!maro_self->maro_tree_) return -1;
+                SetWindowSubclass(maro_self->maro_tree_, maro_TreeProc, 1, reinterpret_cast<DWORD_PTR>(maro_self));
                 TreeView_SetBkColor(maro_self->maro_tree_,RGB(24,24,24));
                 TreeView_SetTextColor(maro_self->maro_tree_,RGB(224,224,224));
                 maro_self->maro_font_=CreateFontW(-MulDiv(10,static_cast<int>(GetDpiForWindow(maro_window)),72),0,0,0,
@@ -110,13 +143,24 @@ LRESULT CALLBACK maro_SourceWindow::maro_Proc(HWND maro_window,UINT maro_message
             MoveWindow(maro_self->maro_tree_,0,0,LOWORD(maro_lparam),HIWORD(maro_lparam),TRUE);
             return 0;
         case WM_NOTIFY:
-            if(!maro_self->maro_updating_ && reinterpret_cast<NMHDR*>(maro_lparam)->code==TVN_SELCHANGEDW)
             {
-                const auto maro_id=reinterpret_cast<NMTREEVIEWW*>(maro_lparam)->itemNew.lParam;
-                if(maro_id>0 && static_cast<std::size_t>(maro_id)<=maro_self->maro_insight_.maro_items.size() && maro_self->maro_navigate_)
-                    maro_self->maro_navigate_(maro_self->maro_insight_.maro_items[maro_id-1]);
+                const auto* maro_notification = reinterpret_cast<const NMHDR*>(maro_lparam);
+                if (maro_notification && maro_notification->hwndFrom == maro_self->maro_tree_ &&
+                    maro_notification->code == NM_CLICK)
+                {
+                    POINT maro_point{};
+                    if (maro_self->maro_clickPoint_) maro_point = *maro_self->maro_clickPoint_;
+                    else
+                    {
+                        const auto maro_position = GetMessagePos();
+                        maro_point = {GET_X_LPARAM(maro_position), GET_Y_LPARAM(maro_position)};
+                        if (!ScreenToClient(maro_self->maro_tree_, &maro_point)) return 0;
+                    }
+                    maro_self->maro_Click(maro_point);
+                    return 0;
+                }
             }
-            return 0;
+            break;
         }
     }
     catch(...) { return maro_message==WM_CREATE ? -1 : 0; }

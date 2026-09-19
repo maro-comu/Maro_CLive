@@ -98,6 +98,7 @@
     <ClCompile Include="maro_DiagnosticFilter_Tests.cpp" />
     <ClCompile Include="maro_CLive_Maro_Package.cpp" />
     <ClCompile Include="maro_Package_Tests.cpp" />
+    <ClCompile Include="maro_FixApply_Tests.cpp" />
     <ClCompile Include="maro_Text.cpp" />
     <ClCompile Include="maro_Process.cpp" />
     <ClCompile Include="maro_Analyzer.cpp" />
@@ -118,6 +119,7 @@
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="maro_Models.hpp" />
+    <ClInclude Include="maro_FixApply.hpp" />
     <ClInclude Include="maro_Text.hpp" />
     <ClInclude Include="maro_Process.hpp" />
     <ClInclude Include="maro_Analyzer.hpp" />

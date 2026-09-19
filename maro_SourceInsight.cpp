@@ -311,6 +311,7 @@ public:
             }
         }
         maro_ReadVariables(maro_start, maro_tokens_.size());
+        maro_ReadInputPolicy();
         maro_ExplainLines();
         std::stable_sort(maro_result_.maro_items.begin(), maro_result_.maro_items.end(),
             [](const maro_SourceItem& maro_left, const maro_SourceItem& maro_right)
@@ -605,6 +606,287 @@ private:
                 maro_IsKeyword(maro_tokens_[maro_nameIndex].maro_text))
                 break;
         }
+    }
+
+    bool maro_SingleScanFormat(std::size_t maro_index, bool& maro_empty) const
+    {
+        if (maro_index >= maro_tokens_.size() || maro_tokens_[maro_index].maro_kind != maro_TokenKind::maro_Literal)
+            return false;
+        auto maro_text = maro_tokens_[maro_index].maro_text;
+        if (maro_text.starts_with(L"L\"") || maro_text.starts_with(L"u\"") || maro_text.starts_with(L"U\""))
+            maro_text.remove_prefix(1);
+        if (maro_text.size() < 4 || maro_text.front() != L'"' || maro_text.back() != L'"' ||
+            maro_index + 1 >= maro_tokens_.size() || maro_tokens_[maro_index + 1].maro_text != L",")
+            return false;
+        maro_text.remove_prefix(1);
+        maro_text.remove_suffix(1);
+        bool maro_skipSpace = false;
+        while (!maro_text.empty())
+        {
+            if (maro_IsSpace(maro_text.front()))
+                maro_text.remove_prefix(1);
+            else if (maro_text.starts_with(L"\\t") || maro_text.starts_with(L"\\n") ||
+                maro_text.starts_with(L"\\r") || maro_text.starts_with(L"\\v") || maro_text.starts_with(L"\\f"))
+                maro_text.remove_prefix(2);
+            else
+                break;
+            maro_skipSpace = true;
+        }
+        if (maro_text.empty() || maro_text.front() != L'%')
+            return false;
+        maro_text.remove_prefix(1);
+        const auto maro_widthStart = maro_text;
+        while (!maro_text.empty() && maro_text.front() >= L'0' && maro_text.front() <= L'9')
+            maro_text.remove_prefix(1);
+        const auto maro_width = maro_widthStart.substr(0, maro_widthStart.size() - maro_text.size());
+        if (maro_text.starts_with(L"hh") || maro_text.starts_with(L"ll"))
+            maro_text.remove_prefix(2);
+        else if (maro_text.starts_with(L"I64") || maro_text.starts_with(L"I32"))
+            maro_text.remove_prefix(3);
+        else if (!maro_text.empty() && std::wstring_view(L"hljztL").find(maro_text.front()) != std::wstring_view::npos)
+            maro_text.remove_prefix(1);
+        if (maro_text.size() != 1 || std::wstring_view(L"diouxXaAeEfFgGcCsS").find(maro_text.front()) == std::wstring_view::npos)
+            return false;
+        const bool maro_character = maro_text == L"c" || maro_text == L"C";
+        if (maro_character && !maro_width.empty() && maro_width != L"1")
+            return false;
+        maro_empty = maro_character && !maro_skipSpace;
+        return true;
+    }
+
+    void maro_ReadInputPolicy()
+    {
+        static const std::unordered_set<std::wstring_view> maro_standardHeaders = {
+            L"assert.h", L"complex.h", L"ctype.h", L"errno.h", L"fenv.h", L"float.h", L"inttypes.h", L"iso646.h",
+            L"limits.h", L"locale.h", L"math.h", L"setjmp.h", L"signal.h", L"stdalign.h", L"stdarg.h", L"stdatomic.h",
+            L"stdbool.h", L"stddef.h", L"stdint.h", L"stdio.h", L"stdlib.h", L"stdnoreturn.h", L"string.h", L"tgmath.h",
+            L"threads.h", L"time.h", L"uchar.h", L"wchar.h", L"wctype.h", L"unistd.h", L"io.h", L"fcntl.h", L"conio.h",
+            L"windows.h", L"Windows.h", L"process.h", L"sys/types.h", L"sys/stat.h", L"algorithm", L"any", L"array",
+            L"atomic", L"barrier", L"bit", L"bitset", L"cassert", L"cctype", L"cerrno", L"cfenv", L"cfloat",
+            L"charconv", L"chrono", L"cinttypes", L"climits", L"clocale", L"cmath", L"codecvt", L"compare", L"complex",
+            L"concepts", L"condition_variable", L"coroutine", L"csetjmp", L"csignal", L"cstdarg", L"cstddef",
+            L"cstdint", L"cstdio", L"cstdlib", L"cstring", L"ctime", L"cuchar", L"cwchar", L"cwctype", L"deque",
+            L"exception", L"execution", L"expected", L"filesystem", L"format", L"forward_list", L"fstream",
+            L"functional", L"future", L"initializer_list", L"iomanip", L"ios", L"iosfwd", L"iostream", L"istream",
+            L"iterator", L"latch", L"limits", L"list", L"locale", L"map", L"memory", L"memory_resource", L"mutex",
+            L"new", L"numbers", L"numeric", L"optional", L"ostream", L"print", L"queue", L"random", L"ranges",
+            L"ratio", L"regex", L"scoped_allocator", L"semaphore", L"set", L"shared_mutex", L"source_location",
+            L"span", L"spanstream", L"sstream", L"stack", L"stacktrace", L"stdexcept", L"stop_token", L"streambuf",
+            L"string", L"string_view", L"strstream", L"syncstream", L"system_error", L"thread", L"tuple",
+            L"type_traits", L"typeindex", L"typeinfo", L"unordered_map", L"unordered_set", L"utility", L"valarray",
+            L"variant", L"vector", L"version"
+        };
+        static const std::unordered_set<std::wstring_view> maro_scanners = {
+            L"scanf", L"scanf_s", L"wscanf", L"wscanf_s", L"vscanf", L"vscanf_s", L"vwscanf", L"vwscanf_s"
+        };
+        static const std::unordered_set<std::wstring_view> maro_fileScanners = {
+            L"fscanf", L"fscanf_s", L"fwscanf", L"fwscanf_s", L"vfscanf", L"vfscanf_s", L"vfwscanf", L"vfwscanf_s"
+        };
+        static const std::unordered_set<std::wstring_view> maro_lines = {
+            L"gets", L"gets_s", L"getchar", L"getwchar", L"_getchar_nolock", L"_getwchar_nolock"
+        };
+        static const std::unordered_set<std::wstring_view> maro_fileInput = {
+            L"fgets", L"fgetws", L"fgetc", L"fgetwc", L"getc", L"getwc", L"fread", L"fread_s",
+            L"_fgetc_nolock", L"_fgetwc_nolock", L"_fread_nolock", L"getline", L"getdelim"
+        };
+        static const std::unordered_set<std::wstring_view> maro_console = {
+            L"_getch", L"_getche", L"_getwch", L"_getwche", L"_cgets", L"_cgets_s", L"_cgetws", L"_cgetws_s",
+            L"_cscanf", L"_cscanf_s", L"_cwscanf", L"_cwscanf_s", L"ReadConsole", L"ReadConsoleA", L"ReadConsoleW"
+        };
+        std::size_t maro_mainStart = maro_none;
+        std::size_t maro_mainEnd = 0;
+        std::size_t maro_inputCount = 0;
+        bool maro_complex = false;
+        bool maro_unknown = maro_result_.maro_truncated;
+        bool maro_inputReference = false;
+        bool maro_single = false;
+        bool maro_empty = false;
+        for (std::size_t maro_index = 0; maro_index < maro_tokens_.size(); ++maro_index)
+        {
+            const auto& maro_token = maro_tokens_[maro_index];
+            const auto maro_text = maro_token.maro_text;
+            if (maro_text == L"for" || maro_text == L"while" || maro_text == L"do" || maro_text == L"goto" ||
+                maro_text == L"co_await" || maro_text == L"co_yield")
+                maro_complex = true;
+            if (maro_token.maro_kind == maro_TokenKind::maro_Directive)
+            {
+                auto maro_directive = maro_Trim(maro_text.substr(1));
+                if (maro_directive.starts_with(L"include"))
+                {
+                    maro_directive = maro_Trim(maro_directive.substr(7));
+                    const auto maro_headerEnd = maro_directive.find(L'>');
+                    if (maro_directive.empty() || maro_directive.front() != L'<' || maro_headerEnd == std::wstring_view::npos ||
+                        !maro_standardHeaders.contains(maro_directive.substr(1, maro_headerEnd - 1)))
+                        maro_unknown = true;
+                }
+                else if (maro_directive.starts_with(L"define"))
+                {
+                    bool maro_macroTruncated = false;
+                    for (const auto& maro_macro : maro_Lexer(maro_directive.substr(6)).maro_Read(maro_macroTruncated))
+                    {
+                        if (maro_macro.maro_kind == maro_TokenKind::maro_Identifier &&
+                            (maro_scanners.contains(maro_macro.maro_text) || maro_fileScanners.contains(maro_macro.maro_text) ||
+                             maro_lines.contains(maro_macro.maro_text) || maro_fileInput.contains(maro_macro.maro_text) ||
+                             maro_console.contains(maro_macro.maro_text) || maro_macro.maro_text == L"cin" ||
+                             maro_macro.maro_text == L"wcin" || maro_macro.maro_text == L"read" || maro_macro.maro_text == L"_read"))
+                            maro_unknown = true;
+                    }
+                }
+                continue;
+            }
+            if (maro_token.maro_kind != maro_TokenKind::maro_Identifier)
+                continue;
+            maro_inputReference = maro_inputReference || maro_text == L"stdin" || maro_text == L"cin" || maro_text == L"wcin";
+            const bool maro_call = maro_index + 1 < maro_tokens_.size() && maro_tokens_[maro_index + 1].maro_text == L"(";
+            const bool maro_std = maro_index >= 2 && maro_tokens_[maro_index - 1].maro_text == L"::" &&
+                maro_tokens_[maro_index - 2].maro_text == L"std";
+            if (maro_call && (maro_text == L"main" || maro_text == L"wmain") && maro_functions_.contains(maro_index))
+            {
+                const auto maro_close = maro_matches_[maro_index + 1];
+                if (maro_close != maro_none && maro_close + 1 < maro_tokens_.size() && maro_tokens_[maro_close + 1].maro_text == L"{")
+                {
+                    maro_mainStart = maro_close + 1;
+                    maro_mainEnd = maro_matches_[maro_mainStart];
+                }
+            }
+            if (maro_call && maro_functions_.contains(maro_index) && !maro_std)
+                continue;
+            if (maro_call && (maro_text == L"main" || maro_text == L"wmain"))
+                maro_complex = true;
+            if (maro_index > 0 && (maro_tokens_[maro_index - 1].maro_text == L"." || maro_tokens_[maro_index - 1].maro_text == L"->"))
+                continue;
+            if (!maro_call && (maro_scanners.contains(maro_text) || maro_fileScanners.contains(maro_text) ||
+                maro_lines.contains(maro_text) || maro_fileInput.contains(maro_text)))
+                maro_inputReference = true;
+            bool maro_input = false;
+            bool maro_currentSingle = false;
+            bool maro_currentEmpty = false;
+            if (maro_text == L"cin" || maro_text == L"wcin")
+            {
+                const auto maro_next = maro_index + 1;
+                if (maro_next + 1 < maro_tokens_.size() && maro_tokens_[maro_next].maro_text == L">" &&
+                    maro_tokens_[maro_next + 1].maro_text == L">")
+                {
+                    maro_input = true;
+                    std::size_t maro_count = 0;
+                    std::size_t maro_end = maro_next;
+                    for (; maro_end < maro_tokens_.size() && maro_end - maro_next < 256 && maro_tokens_[maro_end].maro_text != L";"; ++maro_end)
+                    {
+                        if (maro_end + 1 < maro_tokens_.size() && maro_tokens_[maro_end].maro_text == L">" &&
+                            maro_tokens_[maro_end + 1].maro_text == L">")
+                        {
+                            ++maro_count;
+                            ++maro_end;
+                        }
+                    }
+                    maro_currentSingle = maro_count == 1 && maro_end < maro_tokens_.size() && maro_tokens_[maro_end].maro_text == L";";
+                    if (maro_currentSingle && maro_inputCount == 0)
+                    {
+                        const auto maro_operand = maro_next + 2;
+                        maro_currentSingle = false;
+                        if (maro_operand + 1 == maro_end && maro_tokens_[maro_operand].maro_kind == maro_TokenKind::maro_Identifier)
+                        {
+                            static const std::unordered_set<std::wstring_view> maro_scalarTypes = {
+                                L"bool", L"char", L"signed char", L"unsigned char", L"wchar_t", L"short", L"short int",
+                                L"unsigned short", L"unsigned short int", L"int", L"signed", L"signed int", L"unsigned",
+                                L"unsigned int", L"long", L"long int", L"unsigned long", L"unsigned long int", L"long long",
+                                L"long long int", L"unsigned long long", L"unsigned long long int", L"float", L"double",
+                                L"long double", L"std::string", L"std :: string", L"std::wstring", L"std :: wstring", L"string", L"wstring"
+                            };
+                            std::size_t maro_declarations = 0;
+                            for (const auto& maro_item : maro_result_.maro_items)
+                            {
+                                if (maro_item.maro_kind != maro_SourceItemKind::maro_Variable || maro_item.maro_name != maro_tokens_[maro_operand].maro_text)
+                                    continue;
+                                const auto maro_type = std::wstring_view(maro_item.maro_detail).substr(0, maro_item.maro_detail.find(L" ·"));
+                                maro_currentSingle = maro_scalarTypes.contains(maro_type);
+                                ++maro_declarations;
+                            }
+                            if (maro_declarations != 1) maro_currentSingle = false;
+                        }
+                    }
+                }
+                else if (maro_next + 2 < maro_tokens_.size() && maro_tokens_[maro_next].maro_text == L"." &&
+                    maro_tokens_[maro_next + 2].maro_text == L"(")
+                {
+                    const auto maro_method = maro_tokens_[maro_next + 1].maro_text;
+                    maro_input = maro_method == L"get" || maro_method == L"getline" || maro_method == L"read" ||
+                        maro_method == L"readsome" || maro_method == L"ignore" || maro_method == L"peek";
+                    maro_currentSingle = maro_method == L"get" || maro_method == L"getline";
+                    const auto maro_open = maro_next + 2;
+                    const auto maro_close = maro_matches_[maro_open];
+                    std::size_t maro_commas = 0;
+                    for (auto maro_argument = maro_open + 1; maro_close != maro_none && maro_argument < maro_close &&
+                        maro_argument - maro_open < 256; ++maro_argument)
+                    {
+                        if (maro_tokens_[maro_argument].maro_text == L",")
+                            ++maro_commas;
+                        if ((maro_tokens_[maro_argument].maro_text == L"(" || maro_tokens_[maro_argument].maro_text == L"[") &&
+                            maro_matches_[maro_argument] != maro_none)
+                            maro_argument = maro_matches_[maro_argument];
+                    }
+                    if (maro_close == maro_none || maro_close - maro_open >= 256 || maro_commas >= 2)
+                        maro_currentSingle = false;
+                    maro_currentEmpty = maro_currentSingle;
+                }
+            }
+            if (maro_call && (maro_scanners.contains(maro_text) || maro_fileScanners.contains(maro_text) ||
+                maro_lines.contains(maro_text) || maro_fileInput.contains(maro_text) || maro_console.contains(maro_text) ||
+                maro_text == L"read" || maro_text == L"_read" || maro_text == L"ReadFile"))
+            {
+                const auto maro_open = maro_index + 1;
+                const auto maro_close = maro_matches_[maro_open];
+                const auto maro_end = maro_close == maro_none ? std::min(maro_tokens_.size(), maro_open + 256) : maro_close;
+                bool maro_stdin = false;
+                bool maro_stream = false;
+                std::size_t maro_commas = 0;
+                std::size_t maro_format = maro_none;
+                for (std::size_t maro_argument = maro_open + 1; maro_argument < maro_end && maro_argument - maro_open < 256; ++maro_argument)
+                {
+                    const auto& maro_value = maro_tokens_[maro_argument];
+                    maro_stdin = maro_stdin || maro_value.maro_text == L"stdin";
+                    maro_stream = maro_stream || maro_value.maro_text == L"cin" || maro_value.maro_text == L"wcin";
+                    maro_commas += maro_value.maro_text == L"," ? 1 : 0;
+                    if (maro_format == maro_none && maro_value.maro_kind == maro_TokenKind::maro_Literal)
+                        maro_format = maro_argument;
+                }
+                if (maro_scanners.contains(maro_text) || (maro_fileScanners.contains(maro_text) && maro_stdin))
+                {
+                    maro_input = true;
+                    maro_currentSingle = maro_format != maro_none && maro_SingleScanFormat(maro_format, maro_currentEmpty);
+                }
+                else if (maro_lines.contains(maro_text))
+                    maro_input = maro_currentSingle = maro_currentEmpty = true;
+                else if ((maro_fileInput.contains(maro_text) && maro_stdin) || (maro_text == L"getline" && maro_stream))
+                {
+                    maro_input = true;
+                    maro_currentSingle = maro_text != L"fread" && maro_text != L"fread_s" && maro_text != L"_fread_nolock" &&
+                        maro_text != L"getdelim" && !(maro_text == L"getline" && maro_stream && maro_commas >= 2);
+                    maro_currentEmpty = maro_currentSingle;
+                }
+                else if (maro_console.contains(maro_text) || maro_text == L"ReadFile")
+                    maro_input = true;
+                else if ((maro_text == L"read" || maro_text == L"_read") && maro_open + 1 < maro_end)
+                {
+                    maro_input = maro_tokens_[maro_open + 1].maro_text == L"0" ||
+                        maro_tokens_[maro_open + 1].maro_text == L"STDIN_FILENO" || maro_stdin;
+                    if (!maro_input && maro_tokens_[maro_open + 1].maro_kind != maro_TokenKind::maro_Number)
+                        maro_unknown = true;
+                }
+            }
+            if (!maro_input)
+                continue;
+            ++maro_inputCount;
+            maro_single = maro_currentSingle;
+            maro_empty = maro_currentEmpty;
+            if (maro_mainStart == maro_none || maro_mainEnd == maro_none || maro_index <= maro_mainStart || maro_index >= maro_mainEnd)
+                maro_complex = true;
+        }
+        maro_result_.maro_inputAcceptsEmptyLine = maro_empty;
+        maro_unknown = maro_unknown || (maro_inputCount == 0 && maro_inputReference);
+        maro_result_.maro_inputPolicy = maro_unknown ? maro_InputPolicy::maro_Unknown :
+            maro_inputCount == 0 ? maro_InputPolicy::maro_None :
+            maro_inputCount == 1 && maro_single && !maro_complex ? maro_InputPolicy::maro_SingleLine : maro_InputPolicy::maro_Persistent;
     }
 
     void maro_ExplainLines()

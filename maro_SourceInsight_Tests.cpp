@@ -110,4 +110,88 @@ void maro_TestSourceInsight(const std::function<void(bool, std::string_view)>& m
     maro_pathological.append(20000, L'(');
     const auto maro_boundedSearch = maro_InspectSource(maro_pathological, L"maro_malformed.c");
     maro_expect(maro_boundedSearch.maro_items.empty(), "source insight handles long malformed parenthesis sequence without unbounded prefix search");
+
+    const auto maro_inputPolicy = [](std::wstring_view maro_source)
+    {
+        return maro_InspectSource(maro_source, L"maro_input.cpp");
+    };
+    maro_expect(maro_inputPolicy(L"#include <stdio.h>\nint main(){ puts(\"hello\"); }").maro_inputPolicy == maro_InputPolicy::maro_None,
+        "input policy hides input for output-only source");
+    const auto maro_number = maro_inputPolicy(L"int main(){ int n; scanf(\"%d\", &n); }");
+    maro_expect(maro_number.maro_inputPolicy == maro_InputPolicy::maro_SingleLine && !maro_number.maro_inputAcceptsEmptyLine,
+        "input policy recognizes one scanf field and does not consume an empty submission");
+    const auto maro_lineInput = maro_inputPolicy(L"int main(){ char s[64]; fgets(s, sizeof s, stdin); }");
+    maro_expect(maro_lineInput.maro_inputPolicy == maro_InputPolicy::maro_SingleLine && maro_lineInput.maro_inputAcceptsEmptyLine,
+        "input policy accepts a blank line for one fgets call");
+    const auto maro_getCharacter = maro_inputPolicy(L"int main(){ int c=getchar(); }");
+    maro_expect(maro_getCharacter.maro_inputPolicy == maro_InputPolicy::maro_SingleLine && maro_getCharacter.maro_inputAcceptsEmptyLine,
+        "input policy recognizes single-character stdin calls");
+    maro_expect(maro_inputPolicy(L"int main(){ int n; while(scanf(\"%d\", &n)==1) puts(\"again\"); }").maro_inputPolicy == maro_InputPolicy::maro_Persistent,
+        "input policy preserves a field for repeated loop input");
+    maro_expect(maro_inputPolicy(L"int main(){ char a[4],b[4]; fgets(a,4,stdin); fgets(b,4,stdin); }").maro_inputPolicy == maro_InputPolicy::maro_Persistent,
+        "input policy preserves sequential input calls across lines");
+    maro_expect(maro_inputPolicy(L"int next(){ return getchar(); } int main(){ next(); next(); }").maro_inputPolicy == maro_InputPolicy::maro_Persistent,
+        "input policy preserves helper input with unknown call counts");
+    maro_expect(maro_inputPolicy(L"int main(){ int a,b; scanf(\"%d%d\",&a,&b); }").maro_inputPolicy == maro_InputPolicy::maro_Persistent,
+        "input policy does not hide after only one field of a multiple-conversion scanf");
+    maro_expect(maro_inputPolicy(L"int main(){ int n; scanf(\"%d\\n\",&n); }").maro_inputPolicy == maro_InputPolicy::maro_Persistent,
+        "input policy keeps scanf trailing whitespace available for additional lines");
+    maro_expect(maro_inputPolicy(L"int main(){ char s[8]; scanf(\"%3c\",s); }").maro_inputPolicy == maro_InputPolicy::maro_Persistent,
+        "input policy keeps fixed-width character reads available across short lines");
+    const auto maro_characterScan = maro_inputPolicy(L"int main(){ char c; scanf(\"%c\",&c); }");
+    const auto maro_spaceCharacter = maro_inputPolicy(L"int main(){ char c; scanf(\" %c\",&c); }");
+    maro_expect(maro_characterScan.maro_inputAcceptsEmptyLine && !maro_spaceCharacter.maro_inputAcceptsEmptyLine &&
+        maro_spaceCharacter.maro_inputPolicy == maro_InputPolicy::maro_SingleLine,
+        "input policy distinguishes newline-consuming characters from whitespace-skipping characters");
+    maro_expect(maro_inputPolicy(L"int main(){ int value; std::cin >> value; }").maro_inputPolicy == maro_InputPolicy::maro_SingleLine &&
+        maro_inputPolicy(L"int main(){ std::cin >> first >> second; }").maro_inputPolicy == maro_InputPolicy::maro_Persistent,
+        "input policy keeps chained C++ stream reads available");
+    const auto maro_getLine = maro_inputPolicy(L"int main(){ std::string s; std::getline(std::cin,s); }");
+    maro_expect(maro_getLine.maro_inputPolicy == maro_InputPolicy::maro_SingleLine && maro_getLine.maro_inputAcceptsEmptyLine,
+        "input policy recognizes std getline with a blank line");
+    maro_expect(maro_inputPolicy(L"int main(){ std::cin.read(buffer,128); }").maro_inputPolicy == maro_InputPolicy::maro_Persistent,
+        "input policy preserves a stream bulk read across submitted lines");
+    maro_expect(maro_inputPolicy(L"int main(){ _read(0, buffer, 128); }").maro_inputPolicy == maro_InputPolicy::maro_Persistent &&
+        maro_inputPolicy(L"int main(){ read(STDIN_FILENO, buffer, 128); }").maro_inputPolicy == maro_InputPolicy::maro_Persistent,
+        "input policy recognizes POSIX and CRT stdin descriptors");
+    maro_expect(maro_inputPolicy(L"int main(){ char a[4]; fgets(a,4,file); sscanf(\"1\",\"%d\",&n); }").maro_inputPolicy == maro_InputPolicy::maro_None,
+        "input policy does not confuse disk or string reads with standard input");
+    maro_expect(maro_inputPolicy(L"// scanf(\"%d\",&n)\n/* cin >> x; */\nint main(){ puts(R\"(getchar(); scanf())\"); }").maro_inputPolicy == maro_InputPolicy::maro_None,
+        "input policy ignores comments and raw or ordinary string contents");
+    maro_expect(maro_inputPolicy(L"int scanf(const char*, ...); int main(){ puts(\"hello\"); }").maro_inputPolicy == maro_InputPolicy::maro_None,
+        "input policy ignores input function prototypes");
+    maro_expect(maro_inputPolicy(L"#include \"maro_input.h\"\nint main(){ read_input(); }").maro_inputPolicy == maro_InputPolicy::maro_Unknown,
+        "input policy retains a conservative fallback for user headers");
+    maro_expect(maro_inputPolicy(L"#define READ(x) scanf(\"%d\",x)\nint main(){READ(&n);}").maro_inputPolicy == maro_InputPolicy::maro_Unknown,
+        "input policy retains input hidden inside preprocessor macros");
+    maro_expect(maro_boundedSource.maro_inputPolicy == maro_InputPolicy::maro_Unknown,
+        "input policy does not claim missing input from a truncated document");
+    maro_expect(maro_inputPolicy(L"int main(){ object.read(0,b,4); object.scanf(\"%d\",&n); }").maro_inputPolicy == maro_InputPolicy::maro_None,
+        "input policy does not treat arbitrary member function names as standard input");
+    maro_expect(maro_inputPolicy(L"#include <maro_custom.hpp>\nint main(){ get_value(); }").maro_inputPolicy == maro_InputPolicy::maro_Unknown,
+        "input policy conservatively handles third-party angle-bracket headers");
+    maro_expect(maro_inputPolicy(L"int main(){ FILE* f=stdin; fgets(b,10,f); }").maro_inputPolicy == maro_InputPolicy::maro_Unknown &&
+        maro_inputPolicy(L"int main(){ auto& in=std::cin; in>>n; }").maro_inputPolicy == maro_InputPolicy::maro_Unknown,
+        "input policy retains aliased stdin and standard streams");
+    maro_expect(maro_inputPolicy(L"int main(){ int fd=0; read(fd,b,3); }").maro_inputPolicy == maro_InputPolicy::maro_Unknown &&
+        maro_inputPolicy(L"int main(){ read(3,b,3); }").maro_inputPolicy == maro_InputPolicy::maro_None,
+        "input policy distinguishes unknown descriptors from known non-stdin descriptors");
+    maro_expect(maro_inputPolicy(L"int main(){ std::getline(std::cin,s,':'); }").maro_inputPolicy == maro_InputPolicy::maro_Persistent &&
+        maro_inputPolicy(L"int main(){ std::cin.getline(b,100,':'); }").maro_inputPolicy == maro_InputPolicy::maro_Persistent,
+        "input policy preserves custom-delimiter reads spanning multiple submitted lines");
+    maro_expect(maro_inputPolicy(L"int main(){ getdelim(&b,&size,':',stdin); }").maro_inputPolicy == maro_InputPolicy::maro_Persistent,
+        "input policy preserves POSIX custom-delimiter input");
+    maro_expect(maro_inputPolicy(L"int main(){ fscanf(stdin,\"%d\",&n); }").maro_inputPolicy == maro_InputPolicy::maro_SingleLine &&
+        maro_inputPolicy(L"int main(){ fscanf(file,\"%d\",&n); }").maro_inputPolicy == maro_InputPolicy::maro_None,
+        "input policy limits fscanf detection to standard input");
+    maro_expect(maro_inputPolicy(L"int main(){ char b[8]; gets_s(b,8); goto again; again: gets_s(b,8); }").maro_inputPolicy == maro_InputPolicy::maro_Persistent,
+        "input policy retains input in goto-based repetition");
+    maro_expect(maro_inputPolicy(L"int main(){ scanf(format,&n); }").maro_inputPolicy == maro_InputPolicy::maro_Persistent,
+        "input policy does not assume unknown scanf formats consume one line");
+    maro_expect(maro_inputPolicy(L"#define MESSAGE \"getchar(); scanf()\"\nint main(){puts(MESSAGE);}").maro_inputPolicy == maro_InputPolicy::maro_None,
+        "input policy ignores quoted function names inside macros");
+    maro_expect(maro_inputPolicy(L"int (*reader)(void)=getchar; int main(){reader();}").maro_inputPolicy == maro_InputPolicy::maro_Unknown,
+        "input policy retains indirect standard input function calls");
+    maro_expect(maro_inputPolicy(L"int main(){ Widget value; std::cin >> value; }").maro_inputPolicy == maro_InputPolicy::maro_Persistent,
+        "input policy does not assume a user-defined stream extractor consumes a single line");
 }

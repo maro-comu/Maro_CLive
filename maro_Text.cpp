@@ -52,6 +52,34 @@ char32_t Maro_ReadUtf16CodePoint(
     }
     return first;
 }
+
+unsigned maro_DetectKoreanCodePage(std::string_view maro_bytes, bool maro_final, unsigned maro_fallback)
+{
+    std::size_t maro_hangul = 0;
+    std::size_t maro_index = 0;
+    while (maro_index < maro_bytes.size() && maro_index < 8)
+    {
+        const auto maro_first = static_cast<unsigned char>(maro_bytes[maro_index]);
+        if (maro_first < 0x80)
+        {
+            return maro_hangul != 0 ? 949 : maro_fallback;
+        }
+        if (!IsDBCSLeadByteEx(949, maro_first)) return maro_fallback;
+        if (maro_index + 1 == maro_bytes.size())
+        {
+            return !maro_final ? 0 : maro_hangul != 0 ? 949 : maro_fallback;
+        }
+        wchar_t maro_unit = 0;
+        if (MultiByteToWideChar(949, MB_ERR_INVALID_CHARS, maro_bytes.data() + maro_index,
+                2, &maro_unit, 1) != 1 || maro_unit < 0xac00 || maro_unit > 0xd7a3)
+        {
+            return maro_fallback;
+        }
+        if (++maro_hangul == 2) return 949;
+        maro_index += 2;
+    }
+    return !maro_final ? 0 : maro_hangul != 0 ? 949 : maro_fallback;
+}
 }
 
 std::string Maro_WideToUtf8(std::wstring_view text)
@@ -258,8 +286,9 @@ std::wstring Maro_SanitizeOutput(std::wstring_view text)
     return result;
 }
 
-maro_OutputDecoder::maro_OutputDecoder(unsigned maro_codePage)
-    : maro_codePage_(maro_codePage)
+maro_OutputDecoder::maro_OutputDecoder(unsigned maro_codePage, unsigned maro_fallbackCodePage)
+    : maro_codePage_(maro_codePage),
+      maro_fallbackCodePage_(maro_fallbackCodePage == 0 ? GetACP() : maro_fallbackCodePage)
 {
     CPINFO maro_info{};
     if (maro_codePage_ != 0 && maro_codePage_ != CP_UTF8 &&
@@ -267,6 +296,11 @@ maro_OutputDecoder::maro_OutputDecoder(unsigned maro_codePage)
         (!GetCPInfo(maro_codePage_, &maro_info) || maro_info.MaxCharSize > 2))
     {
         maro_codePage_ = CP_UTF8;
+    }
+    if (maro_fallbackCodePage_ != CP_UTF8 &&
+        (!GetCPInfo(maro_fallbackCodePage_, &maro_info) || maro_info.MaxCharSize > 2))
+    {
+        maro_fallbackCodePage_ = CP_UTF8;
     }
 }
 
@@ -357,7 +391,9 @@ std::wstring maro_OutputDecoder::maro_Decode(std::string_view maro_text, bool ma
             }
             if (maro_codePage_ == 0)
             {
-                maro_codePage_ = GetACP();
+                maro_codePage_ = maro_DetectKoreanCodePage(
+                    std::string_view(maro_pending_).substr(maro_index), maro_final, maro_fallbackCodePage_);
+                if (maro_codePage_ == 0) break;
                 if (maro_codePage_ != CP_UTF8)
                 {
                     break;
