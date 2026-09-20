@@ -1,4 +1,6 @@
 #include "maro_Analyzer.hpp"
+#include "maro_CodeDiagnostics.hpp"
+#include "maro_DiagnosticGuidance.hpp"
 
 #include "maro_Text.hpp"
 
@@ -362,7 +364,7 @@ std::wstring Maro_FriendlyMessage(std::wstring_view original)
     }
     if (lower.find(L"c2143") != std::wstring::npos)
     {
-        return L"문법을 완성하는 기호가 필요합니다. 이 위치 앞뒤의 ';', 괄호 또는 중괄호를 확인하세요.";
+        return L"현재 문장을 해석하지 못했습니다. 아래 컴파일러 설명에 나온 기호와 이 행에서 사용한 매크로 정의를 확인하세요.";
     }
     if (lower.find(L"undeclared identifier") != std::wstring::npos || lower.find(L"c2065") != std::wstring::npos)
     {
@@ -666,7 +668,7 @@ std::optional<Maro_FixSuggestion> maro_GuardedSemicolonFix(
     maro_edit.lengthUtf16 = maro_linePrefix.size();
     maro_edit.expectedText = maro_linePrefix;
     maro_edit.replacement = maro_linePrefix + L";";
-    return Maro_FixSuggestion{L"문장 끝에 ';'가 필요합니다.", {std::move(maro_edit)}};
+    return Maro_FixSuggestion{L"이 문장 끝에 ';'를 추가합니다.", {std::move(maro_edit)}};
 }
 
 Maro_SourcePosition maro_EditorPosition(std::wstring_view maro_source, Maro_SourcePosition maro_position)
@@ -1034,6 +1036,7 @@ Maro_AnalysisResult Maro_RunCompiler(
         toolchain.name,
         toolchain.version,
         sourcePath.wstring());
+    maro_ImproveDiagnostics(request, result.diagnostics);
     result.cancelled = process.termination == Maro_ProcessTermination::Cancelled;
     result.timedOut = process.termination == Maro_ProcessTermination::WallTimedOut ||
         process.termination == Maro_ProcessTermination::CpuTimedOut;
@@ -1062,6 +1065,25 @@ Maro_AnalysisResult Maro_RunCompiler(
     }
     return result;
 }
+}
+
+bool maro_VerifyCompilerSemicolonFix(const Maro_SourceRequest& maro_request, const Maro_TextEdit& maro_edit)
+{
+    const auto& maro_source = maro_request.sourceText;
+    if (maro_source.size() > (1u << 20) || maro_edit.startOffsetUtf16 > maro_source.size() ||
+        maro_edit.lengthUtf16 > maro_source.size() - maro_edit.startOffsetUtf16) return false;
+    const auto maro_offset = maro_edit.startOffsetUtf16 + maro_edit.lengthUtf16;
+    if (!maro_offset) return false;
+    const auto maro_previous = maro_source.rfind(L'\n', maro_offset - 1);
+    const auto maro_start = maro_previous == std::wstring::npos ? 0 : maro_previous + 1;
+    const auto maro_line = 1 + static_cast<std::size_t>(std::count(maro_source.begin(), maro_source.begin() + maro_offset, L'\n'));
+    const auto maro_column = 1 + Maro_WideToUtf8(std::wstring_view(maro_source).substr(maro_start, maro_offset - maro_start)).size();
+    const auto maro_confirmed = maro_GuardedSemicolonFix(maro_request, {maro_line, maro_column});
+    if (!maro_confirmed || maro_confirmed->edits.size() != 1) return false;
+    const auto& maro_expected = maro_confirmed->edits.front();
+    return maro_expected.sourceVersion == maro_edit.sourceVersion && maro_expected.startOffsetUtf16 == maro_edit.startOffsetUtf16 &&
+        maro_expected.lengthUtf16 == maro_edit.lengthUtf16 && maro_expected.expectedText == maro_edit.expectedText &&
+        maro_expected.replacement == maro_edit.replacement;
 }
 
 bool Maro_HasMain(std::wstring_view source)
@@ -1388,12 +1410,8 @@ std::vector<Maro_Diagnostic> Maro_ParseCompilerDiagnostics(
         diagnostic.code = codeText.empty()
             ? Maro_DiagnosticCode(message, diagnostic.severity, request.language)
             : codeText;
-        diagnostic.friendlyMessage = Maro_FriendlyMessage(codeText + L" " + message);
-        if (!diagnostic.friendlyMessage.empty())
-        {
-            diagnostic.friendlyMessage += L"\r\n";
-        }
-        diagnostic.friendlyMessage += message;
+        diagnostic.friendlyMessage = maro_CompilerGuidance(codeText, message);
+        if (diagnostic.friendlyMessage.empty()) diagnostic.friendlyMessage = Maro_FriendlyMessage(codeText + L" " + message);
         diagnostic.sourcePath = maro_reportedPath;
         if (generatedPosition.line != 0)
         {
@@ -1414,7 +1432,7 @@ std::vector<Maro_Diagnostic> Maro_ParseCompilerDiagnostics(
                 {
                     diagnostic.range.start = *maro_insertion;
                     diagnostic.range.end = *maro_insertion;
-                    diagnostic.friendlyMessage = L"문장 끝에 ';'가 필요합니다.\r\n" + message;
+                    diagnostic.friendlyMessage = L"문장 끝에 ';'가 필요합니다.";
                     diagnostic.fix = maro_GuardedSemicolonFix(request, *maro_insertion);
                 }
             }

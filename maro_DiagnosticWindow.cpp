@@ -1,4 +1,5 @@
 #include "maro_DiagnosticWindow.hpp"
+#include "maro_DiagnosticLinks.hpp"
 
 #include <algorithm>
 #include <commctrl.h>
@@ -48,6 +49,20 @@ std::wstring maro_WithoutDirectories(std::wstring maro_text)
         if (maro_slash != std::wstring::npos && maro_slash >= maro_index)
             maro_text.erase(maro_index, maro_slash + 1 - maro_index);
     }
+    return maro_text;
+}
+
+std::wstring maro_DiagnosticText(std::wstring maro_text)
+{
+    maro_text = maro_WithoutDirectories(std::move(maro_text));
+    std::size_t maro_written = 0;
+    for (std::size_t maro_index = 0; maro_index < maro_text.size(); ++maro_index)
+    {
+        const auto maro_character = maro_text[maro_index];
+        if (maro_character == L'\r' && maro_index + 1 < maro_text.size() && maro_text[maro_index + 1] == L'\n') ++maro_index;
+        maro_text[maro_written++] = maro_character == L'\n' ? L'\r' : maro_character;
+    }
+    maro_text.resize(maro_written);
     return maro_text;
 }
 
@@ -262,9 +277,19 @@ void maro_DiagnosticWindow::maro_SetFixCallback(std::function<void(const Maro_Di
     maro_applyFix_ = std::move(maro_fix);
 }
 
-std::optional<std::size_t> maro_DiagnosticWindow::maro_HitFix(POINT maro_point) const
+void maro_DiagnosticWindow::maro_SetNavigateCallback(std::function<void(const Maro_Diagnostic&)> maro_navigate)
 {
-    if (!maro_issues_ || !maro_applyFix_) return std::nullopt;
+    maro_navigate_ = std::move(maro_navigate);
+}
+
+void maro_DiagnosticWindow::maro_SetDocumentationCallback(std::function<void(const Maro_Diagnostic&)> maro_documentation)
+{
+    maro_documentation_ = std::move(maro_documentation);
+}
+
+std::optional<std::size_t> maro_DiagnosticWindow::maro_HitLink(POINT maro_point) const
+{
+    if (!maro_issues_) return std::nullopt;
     RECT maro_bounds{};
     GetClientRect(maro_issues_, &maro_bounds);
     if (!PtInRect(&maro_bounds, maro_point)) return std::nullopt;
@@ -272,9 +297,9 @@ std::optional<std::size_t> maro_DiagnosticWindow::maro_HitFix(POINT maro_point) 
     const auto maro_nearest = static_cast<long>(SendMessageW(maro_issues_, EM_CHARFROMPOS, 0, reinterpret_cast<LPARAM>(&maro_at)));
     for (const auto maro_character : {maro_nearest, maro_nearest - 1})
     {
-      for (std::size_t maro_index = 0; maro_index < maro_fixLinks_.size(); ++maro_index)
+      for (std::size_t maro_index = 0; maro_index < maro_links_.size(); ++maro_index)
       {
-        const auto& maro_link = maro_fixLinks_[maro_index];
+        const auto& maro_link = maro_links_[maro_index];
         if (maro_character < maro_link.maro_start || maro_character >= maro_link.maro_end) continue;
         POINTL maro_origin{};
         SendMessageW(maro_issues_, EM_POSFROMCHAR, reinterpret_cast<WPARAM>(&maro_origin), maro_character);
@@ -298,14 +323,17 @@ std::optional<std::size_t> maro_DiagnosticWindow::maro_HitFix(POINT maro_point) 
     return std::nullopt;
 }
 
-void maro_DiagnosticWindow::maro_InvokeFix(std::size_t maro_index)
+void maro_DiagnosticWindow::maro_InvokeLink(std::size_t maro_index)
 {
-    if (!maro_applyFix_ || maro_index >= maro_fixLinks_.size()) return;
-    const auto maro_diagnostic = maro_fixLinks_[maro_index].maro_diagnostic;
-    maro_fixLinks_.clear();
-    maro_pressedFix_.reset();
+    if (maro_index >= maro_links_.size()) return;
+    const auto maro_link = maro_links_[maro_index];
+    const auto maro_callback = maro_link.maro_kind == maro_LinkKind::maro_Fix ? maro_applyFix_ :
+        maro_link.maro_kind == maro_LinkKind::maro_Navigate ? maro_navigate_ : maro_documentation_;
+    if (!maro_callback) return;
+    if (maro_link.maro_kind == maro_LinkKind::maro_Fix) maro_links_.clear();
+    maro_pressedLink_.reset();
     if (maro_issues_ && GetCapture() == maro_issues_) ReleaseCapture();
-    maro_applyFix_(maro_diagnostic);
+    maro_callback(maro_link.maro_diagnostic);
 }
 
 void maro_DiagnosticWindow::maro_SetSessionState(bool maro_running, bool maro_inputOpen)
@@ -633,27 +661,27 @@ LRESULT CALLBACK maro_DiagnosticWindow::maro_InputProc(HWND maro_window, UINT ma
         {
             if (maro_message == WM_LBUTTONDOWN)
             {
-                maro_instance->maro_pressedFix_ = maro_instance->maro_HitFix({GET_X_LPARAM(maro_lparam), GET_Y_LPARAM(maro_lparam)});
-                if (maro_instance->maro_pressedFix_) SetCapture(maro_window);
+                maro_instance->maro_pressedLink_ = maro_instance->maro_HitLink({GET_X_LPARAM(maro_lparam), GET_Y_LPARAM(maro_lparam)});
+                if (maro_instance->maro_pressedLink_) SetCapture(maro_window);
                 else if (GetCapture() == maro_window) ReleaseCapture();
                 return 0;
             }
             if (maro_message == WM_LBUTTONUP)
             {
-                const auto maro_hit = maro_instance->maro_HitFix({GET_X_LPARAM(maro_lparam), GET_Y_LPARAM(maro_lparam)});
-                const auto maro_pressed = maro_instance->maro_pressedFix_;
+                const auto maro_hit = maro_instance->maro_HitLink({GET_X_LPARAM(maro_lparam), GET_Y_LPARAM(maro_lparam)});
+                const auto maro_pressed = maro_instance->maro_pressedLink_;
                 const bool maro_captured = GetCapture() == maro_window;
-                maro_instance->maro_pressedFix_.reset();
+                maro_instance->maro_pressedLink_.reset();
                 if (maro_captured) ReleaseCapture();
-                if (maro_captured && maro_hit && maro_pressed == maro_hit) maro_instance->maro_InvokeFix(*maro_hit);
+                if (maro_captured && maro_hit && maro_pressed == maro_hit) maro_instance->maro_InvokeLink(*maro_hit);
                 return 0;
             }
             if (maro_message == WM_CAPTURECHANGED || maro_message == WM_CANCELMODE ||
-                (maro_message == WM_MOUSEMOVE && maro_instance->maro_pressedFix_ &&
-                    (!(maro_wparam & MK_LBUTTON) || maro_instance->maro_pressedFix_ !=
-                        maro_instance->maro_HitFix({GET_X_LPARAM(maro_lparam), GET_Y_LPARAM(maro_lparam)}))))
+                (maro_message == WM_MOUSEMOVE && maro_instance->maro_pressedLink_ &&
+                    (!(maro_wparam & MK_LBUTTON) || maro_instance->maro_pressedLink_ !=
+                        maro_instance->maro_HitLink({GET_X_LPARAM(maro_lparam), GET_Y_LPARAM(maro_lparam)}))))
             {
-                maro_instance->maro_pressedFix_.reset();
+                maro_instance->maro_pressedLink_.reset();
                 if (GetCapture() == maro_window) ReleaseCapture();
                 return 0;
             }
@@ -663,7 +691,7 @@ LRESULT CALLBACK maro_DiagnosticWindow::maro_InputProc(HWND maro_window, UINT ma
                 POINT maro_point{};
                 GetCursorPos(&maro_point);
                 ScreenToClient(maro_window, &maro_point);
-                SetCursor(LoadCursorW(nullptr, maro_instance->maro_HitFix(maro_point) ? IDC_HAND : IDC_ARROW));
+                SetCursor(LoadCursorW(nullptr, maro_instance->maro_HitLink(maro_point) ? IDC_HAND : IDC_ARROW));
                 return TRUE;
             }
         }
@@ -697,12 +725,12 @@ LRESULT CALLBACK maro_DiagnosticWindow::maro_InputProc(HWND maro_window, UINT ma
 
 void maro_DiagnosticWindow::maro_SetPending(std::wstring path, std::wstring status)
 {
-    maro_pressedFix_.reset();
+    maro_pressedLink_.reset();
     if (maro_issues_ && GetCapture() == maro_issues_) ReleaseCapture();
     maro_path_ = std::move(path);
     maro_status_ = std::move(status);
     maro_details_.clear();
-    maro_fixLinks_.clear();
+    maro_links_.clear();
     maro_notice_.clear();
     maro_counts_ = L"실시간 진단";
     maro_Refresh();
@@ -710,12 +738,12 @@ void maro_DiagnosticWindow::maro_SetPending(std::wstring path, std::wstring stat
 
 void maro_DiagnosticWindow::maro_SetResult(const Maro_ResultEnvelope& result)
 {
-    maro_pressedFix_.reset();
+    maro_pressedLink_.reset();
     if (maro_issues_ && GetCapture() == maro_issues_) ReleaseCapture();
     std::size_t errors = 0;
     std::size_t warnings = 0;
     std::wostringstream details;
-    maro_fixLinks_.clear();
+    maro_links_.clear();
     for (const auto& diagnostic : result.diagnostics)
     {
         const bool error = diagnostic.severity == Maro_Severity::Error || diagnostic.severity == Maro_Severity::Fatal;
@@ -726,7 +754,7 @@ void maro_DiagnosticWindow::maro_SetResult(const Maro_ResultEnvelope& result)
         }
         errors += error;
         warnings += warning;
-        std::wstring maro_message = maro_WithoutDirectories(diagnostic.friendlyMessage);
+        std::wstring maro_message = maro_DiagnosticText(diagnostic.friendlyMessage);
         const auto maro_break = maro_message.find_first_of(L"\r\n");
         if (diagnostic.code.empty())
         {
@@ -737,19 +765,36 @@ void maro_DiagnosticWindow::maro_SetResult(const Maro_ResultEnvelope& result)
         }
         else
         {
-            details << diagnostic.code << L" · " << (error ? L"오류" : L"경고");
-            maro_message.resize(maro_break == std::wstring::npos ? maro_message.size() : maro_break);
+            const auto maro_start = static_cast<long>(details.tellp());
+            details << diagnostic.code;
+            if (maro_documentation_ && !maro_DiagnosticDocumentation(diagnostic.code).empty())
+                maro_links_.push_back({maro_start, static_cast<long>(details.tellp()), maro_LinkKind::maro_Documentation, diagnostic});
+            details << L" · " << (error ? L"오류" : L"경고");
         }
         if (diagnostic.range.start.line != 0)
         {
-            details << L" · " << diagnostic.range.start.line << L"행";
+            details << L" · ";
+            const auto maro_start = static_cast<long>(details.tellp());
+            details << diagnostic.range.start.line << L"행";
             if (diagnostic.range.start.column != 0) details << L" " << diagnostic.range.start.column << L"열";
+            if (maro_navigate_ && !diagnostic.range.generated && !diagnostic.sourcePath.empty())
+                maro_links_.push_back({maro_start, static_cast<long>(details.tellp()), maro_LinkKind::maro_Navigate, diagnostic});
         }
         details << L"\r";
+        const bool maro_hasFix = diagnostic.fix && !diagnostic.fix->edits.empty();
+        if (diagnostic.friendlyMessage.empty() && maro_hasFix)
+            maro_message = maro_DiagnosticText(diagnostic.fix->description);
         const auto maro_start = static_cast<long>(details.tellp());
         details << maro_message;
-        if (diagnostic.fix && diagnostic.fix->edits.size() == 1 && maro_applyFix_ && !maro_message.empty())
-            maro_fixLinks_.push_back({maro_start, static_cast<long>(details.tellp()), diagnostic});
+        if (maro_hasFix && maro_applyFix_ && !maro_message.empty())
+        {
+            const auto maro_problemEnd = diagnostic.code.empty() ? std::wstring::npos : maro_message.find(L'\r');
+            const auto maro_solutionStart = maro_problemEnd == std::wstring::npos ? 0 :
+                maro_message.find_first_not_of(L"\r\n", maro_problemEnd);
+            if (maro_solutionStart != std::wstring::npos)
+                maro_links_.push_back({maro_start + static_cast<long>(maro_solutionStart),
+                    static_cast<long>(details.tellp()), maro_LinkKind::maro_Fix, diagnostic});
+        }
         if (diagnostic.maro_relatedCount != 0)
             details << L"\r연관 진단 " << diagnostic.maro_relatedCount << L"개 접음";
         details << L"\r\r";
@@ -901,7 +946,7 @@ void maro_DiagnosticWindow::maro_Refresh()
         SendMessageW(maro_issues_, EM_SETCHARFORMAT, SCF_SELECTION, reinterpret_cast<LPARAM>(&maro_format));
         maro_format.dwEffects = CFE_LINK | CFE_UNDERLINE;
         maro_format.crTextColor = RGB(125, 210, 255);
-        for (const auto& maro_link : maro_fixLinks_)
+        for (const auto& maro_link : maro_links_)
         {
             CHARRANGE maro_range{maro_link.maro_start, maro_link.maro_end};
             SendMessageW(maro_issues_, EM_EXSETSEL, 0, reinterpret_cast<LPARAM>(&maro_range));
@@ -1060,20 +1105,7 @@ LRESULT maro_DiagnosticWindow::maro_HandleMessage(UINT message, WPARAM wparam, L
     case WM_NOTIFY:
         if (const auto* maro_header = reinterpret_cast<NMHDR*>(lparam);
             maro_header && maro_header->hwndFrom == maro_issues_ && maro_header->code == EN_LINK)
-        {
-            const auto* maro_link = reinterpret_cast<ENLINK*>(lparam);
-            if (maro_link->msg == WM_LBUTTONUP && maro_applyFix_)
-                for (std::size_t maro_index = 0; maro_index < maro_fixLinks_.size(); ++maro_index)
-                {
-                    const auto& maro_item = maro_fixLinks_[maro_index];
-                    if (maro_item.maro_start == maro_link->chrg.cpMin && maro_item.maro_end == maro_link->chrg.cpMax)
-                    {
-                        maro_InvokeFix(maro_index);
-                        break;
-                    }
-                }
             return 1;
-        }
         break;
     case WM_DRAWITEM:
         if (reinterpret_cast<DRAWITEMSTRUCT*>(lparam)->CtlID == maro_visualizationId)

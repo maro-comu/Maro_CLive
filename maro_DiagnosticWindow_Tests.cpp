@@ -119,10 +119,18 @@ bool maro_TestDiagnosticWindow()
         maro_error.friendlyMessage = L"문장 끝에 ';'가 필요합니다.";
         maro_error.maro_relatedCount = 2;
         maro_error.fix = Maro_FixSuggestion{L"세미콜론 추가", {{17, 30, 0, L";", L""}}};
-        int maro_fixes = 0;
+        int maro_fixes = 0, maro_navigations = 0, maro_documentations = 0;
         Maro_Diagnostic maro_clicked;
         maro_debug->maro_SetFixCallback([&](const Maro_Diagnostic& maro_diagnostic) {
             ++maro_fixes;
+            maro_clicked = maro_diagnostic;
+        });
+        maro_debug->maro_SetNavigateCallback([&](const Maro_Diagnostic& maro_diagnostic) {
+            ++maro_navigations;
+            maro_clicked = maro_diagnostic;
+        });
+        maro_debug->maro_SetDocumentationCallback([&](const Maro_Diagnostic& maro_diagnostic) {
+            ++maro_documentations;
             maro_clicked = maro_diagnostic;
         });
         maro_result.diagnostics.push_back(maro_error);
@@ -130,6 +138,7 @@ bool maro_TestDiagnosticWindow()
         maro_check(maro_ControlText(maro_issues).starts_with(L"C2143 · 오류 · 3행 31열") &&
             maro_ControlText(maro_issues).find(L"연관 진단 2개 접음") != std::wstring::npos &&
             maro_ControlText(maro_issues).find(L"문장 끝에 ';'가 필요합니다.") != std::wstring::npos &&
+            maro_ControlText(maro_issues).find(L"세미콜론 추가") == std::wstring::npos &&
             maro_ControlText(maro_issues).find(L"private") == std::wstring::npos &&
             maro_ControlText(maro_issues).find(L"raw compiler") == std::wstring::npos &&
             maro_ControlText(GetDlgItem(maro_debugWindow, 103)) == L"실시간 진단 · 오류 1 · 경고 0" &&
@@ -151,8 +160,8 @@ bool maro_TestDiagnosticWindow()
             "safe fix solution has a visible link style");
         SendMessageW(maro_debugWindow, WM_NOTIFY, 104, reinterpret_cast<LPARAM>(&maro_link));
         SendMessageW(maro_debugWindow, WM_NOTIFY, 104, reinterpret_cast<LPARAM>(&maro_link));
-        maro_check(maro_fixes == 1 && maro_clicked.fix && maro_clicked.fix->edits[0].replacement == L";" &&
-            maro_clicked.range.start.column == 31, "solution click carries exact fix once");
+        maro_check(maro_fixes == 0 && maro_navigations == 0 && maro_documentations == 0,
+            "link notifications without a matching mouse gesture cannot invoke callbacks");
         maro_debug->maro_SetResult(maro_result);
         POINTL maro_linkPoint{};
         SendMessageW(maro_issues, EM_POSFROMCHAR, reinterpret_cast<WPARAM>(&maro_linkPoint), maro_link.chrg.cpMin + 2);
@@ -161,8 +170,32 @@ bool maro_TestDiagnosticWindow()
             SendMessageW(maro_issues, WM_LBUTTONUP, 0, MAKELPARAM(maro_x, maro_y));
         };
         maro_clickAt(320, maro_linkPoint.y + 2);
-        maro_clickAt(4, 2);
-        maro_check(maro_fixes == 1, "blank area and diagnostic title cannot apply fixes");
+        POINTL maro_relatedPoint{}, maro_severityPoint{};
+        SendMessageW(maro_issues, EM_POSFROMCHAR, reinterpret_cast<WPARAM>(&maro_relatedPoint), maro_link.chrg.cpMax + 1);
+        SendMessageW(maro_issues, EM_POSFROMCHAR, reinterpret_cast<WPARAM>(&maro_severityPoint), 8);
+        maro_clickAt(maro_relatedPoint.x + 2, maro_relatedPoint.y + 2);
+        maro_clickAt(maro_severityPoint.x + 2, maro_severityPoint.y + 2);
+        maro_check(maro_fixes == 0 && maro_navigations == 0 && maro_documentations == 0,
+            "blank area related count and severity are not actions");
+        POINTL maro_codePoint{}, maro_locationPoint{};
+        SendMessageW(maro_issues, EM_POSFROMCHAR, reinterpret_cast<WPARAM>(&maro_codePoint), 1);
+        SendMessageW(maro_issues, EM_POSFROMCHAR, reinterpret_cast<WPARAM>(&maro_locationPoint),
+            static_cast<LPARAM>(std::wstring_view(L"C2143 · 오류 · ").size()));
+        maro_clickAt(maro_codePoint.x + 2, maro_codePoint.y + 2);
+        maro_check(maro_documentations == 1 && maro_navigations == 0 && maro_fixes == 0 && maro_clicked.code == L"C2143",
+            "only the error code opens its documentation");
+        maro_clickAt(maro_locationPoint.x + 2, maro_locationPoint.y + 2);
+        maro_check(maro_navigations == 1 && maro_documentations == 1 && maro_fixes == 0 &&
+            maro_clicked.range.start.line == 3 && maro_clicked.range.start.column == 31 && maro_clicked.sourcePath == maro_error.sourcePath,
+            "line and column link carries the exact source location without fixing it");
+        maro_clickAt(maro_locationPoint.x + 2, maro_locationPoint.y + 2);
+        maro_check(maro_navigations == 2, "location links remain usable after navigation");
+        maro_clickAt(maro_linkPoint.x + 2, maro_linkPoint.y + 2);
+        maro_check(maro_fixes == 1 && maro_clicked.fix && maro_clicked.fix->edits[0].replacement == L";" &&
+            maro_clicked.range.start.column == 31, "native solution click carries the exact fix");
+        maro_clickAt(maro_linkPoint.x + 2, maro_linkPoint.y + 2);
+        maro_check(maro_fixes == 1, "applied solution links cannot be reused before fresh diagnostics");
+        maro_debug->maro_SetResult(maro_result);
         maro_clickAt(maro_linkPoint.x + 2, maro_linkPoint.y + 2);
         maro_check(maro_fixes == 2, "native mouse clicks on solution glyphs apply the fix");
         maro_debug->maro_SetResult(maro_result);
@@ -195,6 +228,21 @@ bool maro_TestDiagnosticWindow()
         SendMessageW(maro_issues, WM_LBUTTONUP, 0, MAKELPARAM(-10, -10));
         SendMessageW(maro_issues, WM_LBUTTONUP, 0, maro_solutionPoint);
         maro_check(maro_fixes == 2 && GetCapture() != maro_issues, "outside release cannot leave a stale solution press");
+        const auto maro_codePosition = MAKELPARAM(maro_codePoint.x + 2, maro_codePoint.y + 2);
+        const auto maro_locationPosition = MAKELPARAM(maro_locationPoint.x + 2, maro_locationPoint.y + 2);
+        SendMessageW(maro_issues, WM_LBUTTONDOWN, MK_LBUTTON, maro_codePosition);
+        SendMessageW(maro_issues, WM_LBUTTONUP, 0, maro_locationPosition);
+        maro_check(maro_navigations == 2 && maro_documentations == 1 && GetCapture() != maro_issues,
+            "pressing the code and releasing on the location invokes neither action");
+        SendMessageW(maro_issues, WM_LBUTTONDOWN, MK_LBUTTON, maro_locationPosition);
+        maro_debug->maro_SetResult(maro_result);
+        SendMessageW(maro_issues, WM_LBUTTONUP, 0, maro_locationPosition);
+        SendMessageW(maro_issues, WM_LBUTTONDOWN, MK_LBUTTON, maro_codePosition);
+        maro_debug->maro_SetPending(maro_error.sourcePath, L"검사 중...");
+        maro_debug->maro_SetResult(maro_result);
+        SendMessageW(maro_issues, WM_LBUTTONUP, 0, maro_codePosition);
+        maro_check(maro_navigations == 2 && maro_documentations == 1 && GetCapture() != maro_issues,
+            "new or pending results invalidate navigation and documentation presses");
         maro_clickAt(maro_linkPoint.x + 2, maro_linkPoint.y + 2);
         maro_check(maro_fixes == 3, "a new complete solution click still works after cancellation");
         for (long maro_character = maro_link.chrg.cpMin; maro_character < maro_link.chrg.cpMax - 1; ++maro_character)
@@ -215,6 +263,128 @@ bool maro_TestDiagnosticWindow()
         maro_check(maro_ControlText(maro_issues).starts_with(L"무한반복 의심 · 3행 31열") &&
             maro_ControlText(maro_issues).find(L"종료 조건과 반복 변수를 확인하세요.") != std::wstring::npos &&
             maro_ControlText(maro_issues).find(L"C2143") == std::wstring::npos, "runtime guidance has no invented compiler code");
+        const auto maro_previousFixes = maro_fixes;
+        maro_clickAt(5, 3);
+        POINTL maro_guidancePoint{};
+        SendMessageW(maro_issues, EM_POSFROMCHAR, reinterpret_cast<WPARAM>(&maro_guidancePoint),
+            static_cast<LPARAM>(std::wstring_view(L"무한반복 의심 · 3행 31열\r").size()));
+        maro_clickAt(maro_guidancePoint.x + 2, maro_guidancePoint.y + 2);
+        maro_check(maro_fixes == maro_previousFixes && maro_documentations == 1 && maro_navigations == 2,
+            "runtime title and manual guidance are not actionable fixes or documentation");
+        maro_result.diagnostics[0].range = {};
+        maro_debug->maro_SetResult(maro_result);
+        maro_clickAt(5, 3);
+        maro_check(maro_navigations == 2 && maro_ControlText(maro_issues).find(L"행") == std::wstring::npos,
+            "runtime diagnostics without a known location do not offer navigation");
+        maro_result.diagnostics[0] = maro_error;
+        maro_result.diagnostics[0].fix.reset();
+        maro_result.diagnostics[0].range.generated = true;
+        maro_debug->maro_SetResult(maro_result);
+        maro_clickAt(maro_locationPoint.x + 2, maro_locationPoint.y + 2);
+        maro_check(maro_navigations == 2, "generated source coordinates are not navigation links");
+        maro_result.diagnostics[0] = maro_error;
+        maro_result.diagnostics[0].fix->description = L"선언과 사용을 함께 수정합니다.";
+        maro_result.diagnostics[0].fix->edits.push_back({17, 50, 1, L"=", L"+"});
+        maro_debug->maro_SetResult(maro_result);
+        maro_clickAt(maro_linkPoint.x + 2, maro_linkPoint.y + 2);
+        maro_check(maro_fixes == maro_previousFixes + 1 && maro_clicked.fix && maro_clicked.fix->edits.size() == 2,
+            "existing solution forwards all guarded edits without adding a second action");
+        maro_check(maro_ControlText(maro_issues).find(L"선언과 사용을 함께 수정합니다.") == std::wstring::npos,
+            "differently worded fix descriptions do not create duplicate solution paragraphs");
+        maro_result.diagnostics[0] = maro_error;
+        maro_result.diagnostics[0].friendlyMessage = maro_error.fix->description;
+        maro_debug->maro_SetResult(maro_result);
+        const auto maro_sameDescription = maro_ControlText(maro_issues);
+        const auto maro_firstDescription = maro_sameDescription.find(maro_error.fix->description);
+        maro_check(maro_firstDescription != std::wstring::npos &&
+            maro_sameDescription.find(maro_error.fix->description, maro_firstDescription + 1) == std::wstring::npos,
+            "identical explanation and solution are displayed only once");
+        const auto maro_clickCharacter = [&](long maro_character) {
+            POINTL maro_point{};
+            SendMessageW(maro_issues, EM_POSFROMCHAR, reinterpret_cast<WPARAM>(&maro_point), maro_character);
+            maro_clickAt(maro_point.x + 2, maro_point.y + 2);
+        };
+        const std::wstring maro_problem = L"조건식에서 값을 대입하고 있습니다.";
+        const std::wstring maro_solution = L"비교가 목적이라면 '='를 '=='로 바꾸세요.";
+        const std::wstring maro_caution = L"대입이 목적이라면 수정하지 마세요.";
+        for (const std::wstring_view maro_newline : {L"\n", L"\r\n", L"\r"})
+        {
+            maro_result.diagnostics[0] = maro_error;
+            maro_result.diagnostics[0].friendlyMessage = maro_problem + std::wstring(maro_newline) +
+                maro_solution + std::wstring(maro_newline) + maro_caution;
+            maro_result.diagnostics[0].fix->description = L"조건문의 연산자를 변경합니다.";
+            maro_debug->maro_SetResult(maro_result);
+            const auto maro_displayed = maro_ControlText(maro_issues);
+            const auto maro_firstSolution = maro_displayed.find(maro_solution);
+            maro_check(maro_firstSolution != std::wstring::npos &&
+                maro_displayed.find(maro_solution, maro_firstSolution + 1) == std::wstring::npos &&
+                maro_displayed.find(maro_problem) != std::wstring::npos &&
+                maro_displayed.find(maro_caution) != std::wstring::npos &&
+                maro_displayed.find(L"조건문의 연산자를 변경합니다.") == std::wstring::npos,
+                "problem solution and intent caution remain visible once without an extra fix paragraph");
+            const auto maro_before = maro_fixes;
+            maro_clickCharacter(maro_link.chrg.cpMin + 1);
+            CHARRANGE maro_problemRange{maro_link.chrg.cpMin,
+                maro_link.chrg.cpMin + static_cast<long>(maro_problem.size())};
+            SendMessageW(maro_issues, EM_EXSETSEL, 0, reinterpret_cast<LPARAM>(&maro_problemRange));
+            maro_linkFormat = {sizeof(maro_linkFormat)};
+            SendMessageW(maro_issues, EM_GETCHARFORMAT, SCF_SELECTION, reinterpret_cast<LPARAM>(&maro_linkFormat));
+            maro_check(maro_fixes == maro_before && (maro_linkFormat.dwEffects & CFE_LINK) == 0,
+                "separate problem paragraph is neither styled nor handled as a fix link");
+            const auto maro_solutionCharacter = maro_link.chrg.cpMin + static_cast<long>(maro_problem.size()) + 2;
+            maro_clickCharacter(maro_solutionCharacter);
+            maro_clickCharacter(maro_solutionCharacter);
+            maro_check(maro_fixes == maro_before + 1 && maro_navigations == 2 && maro_documentations == 1,
+                "existing multiline solution requests exactly one fix with normalized newline offsets");
+        }
+        maro_result.diagnostics[0] = maro_error;
+        maro_result.diagnostics[0].friendlyMessage.clear();
+        maro_debug->maro_SetResult(maro_result);
+        const auto maro_beforeFallback = maro_fixes;
+        const auto maro_fallbackText = maro_ControlText(maro_issues);
+        const auto maro_fallbackPosition = maro_fallbackText.find(maro_error.fix->description);
+        maro_clickCharacter(maro_link.chrg.cpMin + 1);
+        maro_check(maro_fixes == maro_beforeFallback + 1 && maro_fallbackPosition != std::wstring::npos &&
+            maro_fallbackText.find(maro_error.fix->description, maro_fallbackPosition + 1) == std::wstring::npos,
+            "fix description is used once only when the friendly solution is absent");
+        maro_result.diagnostics[0] = maro_error;
+        maro_result.diagnostics[0].fix->description.clear();
+        maro_debug->maro_SetResult(maro_result);
+        maro_clickCharacter(maro_link.chrg.cpMin + 1);
+        maro_check(maro_fixes == maro_beforeFallback + 2 &&
+            maro_ControlText(maro_issues).find(maro_error.friendlyMessage) != std::wstring::npos,
+            "existing solution remains actionable when optional fix description is empty");
+        maro_result.diagnostics[0].fix->edits.clear();
+        maro_debug->maro_SetResult(maro_result);
+        maro_clickCharacter(maro_link.chrg.cpMin + 1);
+        maro_check(maro_fixes == maro_beforeFallback + 2,
+            "a solution without guarded edits remains manual guidance");
+        maro_result.diagnostics[0].code.clear();
+        maro_result.diagnostics[0].friendlyMessage = L"실행 오류\r\n첫 설명\r\n다음 설명";
+        maro_result.diagnostics[0].fix.reset();
+        maro_result.diagnostics.push_back(maro_error);
+        maro_debug->maro_SetResult(maro_result);
+        const std::wstring maro_firstDiagnostic = L"실행 오류 · 3행 31열\r첫 설명\r다음 설명\r연관 진단 2개 접음\r\r";
+        POINTL maro_secondCode{};
+        SendMessageW(maro_issues, EM_POSFROMCHAR, reinterpret_cast<WPARAM>(&maro_secondCode),
+            static_cast<LPARAM>(maro_firstDiagnostic.size() + 1));
+        maro_clickAt(maro_secondCode.x + 2, maro_secondCode.y + 2);
+        maro_check(maro_documentations == 2 && maro_clicked.code == L"C2143",
+            "multiline runtime guidance retains exact following link offsets");
+        maro_result.diagnostics.resize(1);
+        maro_result.diagnostics[0] = maro_error;
+        maro_result.diagnostics[0].code = L"unsupported-code";
+        maro_result.diagnostics[0].friendlyMessage = L"잘못된 형식입니다.\n인수의 형식과 서식 문자열을 맞추세요.";
+        maro_result.diagnostics[0].fix.reset();
+        maro_debug->maro_SetResult(maro_result);
+        maro_clickAt(maro_codePoint.x + 2, maro_codePoint.y + 2);
+        CHARRANGE maro_unsupportedRange{0, 16};
+        SendMessageW(maro_issues, EM_EXSETSEL, 0, reinterpret_cast<LPARAM>(&maro_unsupportedRange));
+        maro_linkFormat = {sizeof(maro_linkFormat)};
+        SendMessageW(maro_issues, EM_GETCHARFORMAT, SCF_SELECTION, reinterpret_cast<LPARAM>(&maro_linkFormat));
+        maro_check(maro_documentations == 2 && (maro_linkFormat.dwEffects & CFE_LINK) == 0 &&
+            maro_ControlText(maro_issues).find(L"인수의 형식과 서식 문자열을 맞추세요.") != std::wstring::npos,
+            "unsupported codes stay plain while multiline manual solutions remain visible");
         maro_output->maro_ClearOutput();
         maro_output->maro_AppendOutput(std::wstring(1024 * 1024 + 10, L'X'));
         maro_output->maro_AppendOutput(L"tail");

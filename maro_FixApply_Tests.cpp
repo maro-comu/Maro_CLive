@@ -1,9 +1,18 @@
 #include "maro_FixApply.hpp"
 #include "maro_Analyzer.hpp"
+#include "maro_DiagnosticLinks.hpp"
 #include <functional>
 
 void maro_TestSafeFixes(const std::function<void(bool, std::string_view)>& maro_expect)
 {
+    maro_expect(maro_DiagnosticDocumentation(L"C2143") == L"https://learn.microsoft.com/ko-kr/search/?terms=C2143",
+        "MSVC diagnostic code links only to official documentation search");
+    maro_expect(maro_DiagnosticDocumentation(L"C2143&secret=x").empty() &&
+        maro_DiagnosticDocumentation(L"https://untrusted.invalid").empty(), "diagnostic text cannot inject a URL or search arguments");
+    maro_expect(maro_DiagnosticDocumentation(L"-Wformat").ends_with(L"#wformat") &&
+        maro_DiagnosticDocumentation(L"MARO-MACRO-VALUE").ends_with(L"#maro-macro-value"), "Clang and local rule documentation links");
+    maro_expect(maro_DiagnosticDocumentation(L"-W").empty() && maro_DiagnosticDocumentation(L"MARO-UNKNOWN").empty(),
+        "empty warning identifiers and undocumented internal codes have no invented links");
     const auto maro_parse = [](const Maro_SourceRequest& maro_source, std::size_t maro_line, std::wstring_view maro_code = L"C2143") {
         return Maro_ParseCompilerDiagnostics(L"maro_UserSource.c(" + std::to_wstring(maro_line) +
             L",1): error " + std::wstring(maro_code) + L": syntax error: missing ';' before 'return'",
@@ -26,6 +35,9 @@ void maro_TestSafeFixes(const std::function<void(bool, std::string_view)>& maro_
     maro_expect(!maro_validate(maro_diagnostic, 28, maro_source.sourcePath, maro_source.sourceText), "stale diagnostic version cannot modify source");
     maro_expect(!maro_validate(maro_diagnostic, 27, L"maro_other.c", maro_source.sourceText), "different document cannot receive the fix");
     maro_expect(!maro_validate(maro_diagnostic, 27, maro_source.sourcePath, maro_source.sourceText + L" "), "any concurrent source edit rejects the fix");
+    const auto maro_atomic = maro_ValidateFix(maro_source, maro_diagnostic, 27, maro_source.sourcePath, maro_source.sourceText);
+    maro_expect(maro_atomic && maro_atomic->maro_replacement == L";" && maro_atomic->maro_start.line == 3 &&
+        maro_atomic->maro_start.column == maro_atomic->maro_end.column, "general fix application reduces a guarded semicolon to one atomic insertion");
     if (maro_diagnostic.fix)
     {
         auto maro_bad = maro_diagnostic;
@@ -75,4 +87,34 @@ void maro_TestSafeFixes(const std::function<void(bool, std::string_view)>& maro_
     }
     maro_source.sourceText = L"int main(){while(1){}}";
     maro_expect(maro_MakeTimeoutDiagnostic(maro_source, true).range.start.line == 0, "project timeout cannot assume the active document is executing");
+    maro_source.sourceText = L"#define MAX_SIZE = 100;\r\nint main(void){int a[MAX_SIZE]; return 0;}\r\n";
+    std::vector<Maro_Diagnostic> maro_macroFindings;
+    maro_ImproveDiagnostics(maro_source, maro_macroFindings);
+    bool maro_macroApplied = false;
+    for (const auto& maro_finding : maro_macroFindings)
+    {
+        if (!maro_finding.fix) continue;
+        const auto maro_fix = maro_ValidateFix(maro_source, maro_finding, 27, maro_source.sourcePath, maro_source.sourceText);
+        maro_expect(maro_fix.has_value(), "source-aware macro replacement is approved from the unchanged source");
+        if (maro_fix && maro_fix->maro_start.line == 1) maro_macroApplied = true;
+        auto maro_tampered = maro_finding;
+        maro_tampered.fix->edits[0].replacement = L"while(1){}";
+        maro_expect(!maro_ValidateFix(maro_source, maro_tampered, 27, maro_source.sourcePath, maro_source.sourceText),
+            "a replacement that does not match a regenerated rule is rejected");
+        maro_expect(!maro_ValidateFix(maro_source, maro_finding, 28, maro_source.sourcePath, maro_source.sourceText) &&
+            !maro_ValidateFix(maro_source, maro_finding, 27, L"other.c", maro_source.sourceText) &&
+            !maro_ValidateFix(maro_source, maro_finding, 27, maro_source.sourcePath, maro_source.sourceText + L" "),
+            "general replacements retain version, document and complete source guards");
+    }
+    maro_expect(maro_macroApplied, "non-semicolon source fix is available for malformed numeric macro");
+    maro_source.sourceText = L"int main(){ if(1) return 0; }";
+    Maro_Diagnostic maro_falseSemicolon;
+    maro_falseSemicolon.sourcePath = maro_source.sourcePath;
+    maro_falseSemicolon.sourceVersion = maro_source.sourceVersion;
+    const auto maro_falseEnd = maro_source.sourceText.find(L"if(1)") + 5;
+    const auto maro_falsePrefix = maro_source.sourceText.substr(0, maro_falseEnd);
+    maro_falseSemicolon.fix = Maro_FixSuggestion{L"invalid proposal", {{maro_source.sourceVersion, 0, maro_falseEnd,
+        maro_falsePrefix, maro_falsePrefix + L";"}}};
+    maro_expect(!maro_ValidateFix(maro_source, maro_falseSemicolon, 27, maro_source.sourcePath, maro_source.sourceText),
+        "semicolon-shaped proposals must also pass the original conservative syntax rule");
 }

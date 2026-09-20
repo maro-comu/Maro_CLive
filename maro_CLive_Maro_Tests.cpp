@@ -1,4 +1,5 @@
 #include "maro_Analyzer.hpp"
+#include "maro_CodeDiagnostics.hpp"
 #include "maro_Engine.hpp"
 #include "maro_OutputQueue.hpp"
 #include "maro_Process.hpp"
@@ -629,6 +630,62 @@ void maro_TestEngineLifecycle(Maro_TestState& maro_state)
         "engine shutdown does not stall on startup or cancelled work");
 }
 
+void maro_TestCompiledSolutions(Maro_TestState& maro_state)
+{
+    struct maro_Case { const wchar_t* maro_code; const wchar_t* maro_source; };
+    const maro_Case maro_cases[] = {
+        {L"MARO-MACRO-VALUE", L"#define MARO_CAP = 100;\nint main(void){int a[MARO_CAP]={7};return a[0];}"},
+        {L"MARO-MACRO-PRECEDENCE", L"#define MARO_SQUARE(x) x * x\nint main(void){return 100/MARO_SQUARE(2+3);}"},
+        {L"MARO-STRING-COMPARE", L"#include <string.h>\nint main(void){char* a=\"Hello\";if(a==\"Hello\"){return 1;}return 0;}"},
+        {L"MARO-ARRAY-ASSIGNMENT", L"#include <string.h>\nint main(void){char* a=\"Hello\";char b[6];b=a;return b[0];}"},
+        {L"MARO-PRINTF-POINTER", L"#include <stdio.h>\nint main(void){int a=7;int* p=&a;printf(\"%d\",p);return 0;}"},
+        {L"MARO-CONDITION-ASSIGNMENT", L"int main(void){int b=0;if(b=0){return 1;}return 0;}"},
+        {L"MARO-MISSING-SEMICOLON", L"int main(void){return 0\n}"}
+    };
+    std::uint64_t maro_version = 8000;
+    for (const auto& maro_case : maro_cases)
+    {
+        Maro_SourceRequest maro_request;
+        maro_request.sourceVersion = ++maro_version;
+        maro_request.sourcePath = L"maro_SolutionCheck.c";
+        maro_request.sourceText = maro_case.maro_source;
+        maro_request.language = Maro_Language::C17;
+        maro_request.mode = Maro_SourceMode::Program;
+        maro_request.execute = false;
+        if (std::wstring_view(maro_case.maro_code) == L"MARO-MACRO-VALUE")
+        {
+            const auto maro_original = Maro_RunToCompletion(maro_request);
+            bool maro_root = false, maro_cascade = false;
+            if (maro_original)
+                for (const auto& maro_diagnostic : maro_original->diagnostics)
+                {
+                    maro_root = maro_root || maro_diagnostic.code == L"MARO-MACRO-VALUE";
+                    maro_cascade = maro_cascade || maro_diagnostic.code == L"C4431" || maro_diagnostic.code == L"C2075";
+                }
+            maro_state.Expect(maro_original && maro_root && !maro_cascade,
+                "real compiler's malformed numeric macro cascade reduces to the proven root definition");
+        }
+        std::vector<Maro_Diagnostic> maro_findings;
+        maro_ImproveDiagnostics(maro_request, maro_findings);
+        bool maro_applied = false;
+        for (const auto& maro_finding : maro_findings)
+        {
+            if (maro_finding.code != maro_case.maro_code || !maro_finding.fix || maro_finding.fix->edits.size() != 1) continue;
+            const auto& maro_edit = maro_finding.fix->edits.front();
+            maro_request.sourceText.replace(maro_edit.startOffsetUtf16, maro_edit.lengthUtf16, maro_edit.replacement);
+            maro_applied = true;
+            break;
+        }
+        maro_state.Expect(maro_applied, "compiler verification has a supported solution to apply");
+        if (!maro_applied) continue;
+        const auto maro_result = Maro_RunToCompletion(std::move(maro_request));
+        const bool maro_success = maro_result && maro_result->status == Maro_Status::Success;
+        maro_state.Expect(maro_success, "each proposed non-semicolon and semicolon repair passes the real C compiler without executing user code");
+        if (!maro_success)
+            std::wcerr << maro_case.maro_code << L": " << (maro_result ? maro_result->compilerOutput : L"compiler timed out") << L'\n';
+    }
+}
+
 void Maro_TestEngineSuccess(Maro_TestState& state)
 {
     const Maro_ToolchainInfo toolchain = Maro_DetectToolchain();
@@ -1082,6 +1139,8 @@ void maro_TestOptionalUpdateCheck(Maro_TestState& state)
 bool maro_TestDiagnosticWindow();
 bool maro_TestDeferredCommands();
 bool maro_TestSourceWindow();
+bool maro_TestCodeDiagnostics();
+bool maro_TestDiagnosticGuidance();
 
 int maro_RunProcessInputChild(int, char**);
 void maro_TestProcessInput(const std::function<void(bool, std::string_view)>&);
@@ -1109,6 +1168,8 @@ int main(int maro_argc, char** maro_argv)
         maro_TestProjects([&state](bool maro_ok, std::string_view maro_name) { state.Expect(maro_ok, maro_name); });
         state.Expect(maro_TestDeferredCommands(), "400 menu commands return without querying UI services or starting work");
         state.Expect(maro_TestSourceWindow(), "right source pane groups and navigation preserve exact source coordinates");
+        state.Expect(maro_TestCodeDiagnostics(), "source-aware diagnostics and exact proposed replacements");
+        state.Expect(maro_TestDiagnosticGuidance(), "compiler guidance describes specific safe remediation and intent limits");
         state.Expect(maro_TestDiagnosticWindow(), "diagnostic pane renders split read-only views, findings, resize and reopen");
         Maro_TestUtfConversions(state);
         Maro_TestTextCoordinates(state);
@@ -1119,6 +1180,7 @@ int main(int maro_argc, char** maro_argv)
         maro_TestCompilerDiagnostics(state);
         maro_TestOutputQueue(state);
         maro_TestEngineLifecycle(state);
+        maro_TestCompiledSolutions(state);
         Maro_TestEngineSuccess(state);
         Maro_TestEngineStreamingOutput(state);
         Maro_TestEngineCompileFailure(state);

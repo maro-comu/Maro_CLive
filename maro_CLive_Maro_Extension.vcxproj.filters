@@ -18,6 +18,8 @@
     <ClCompile Include="maro_Text.cpp"><Filter>maro_Source</Filter></ClCompile>
     <ClCompile Include="maro_Process.cpp"><Filter>maro_Source</Filter></ClCompile>
     <ClCompile Include="maro_Analyzer.cpp"><Filter>maro_Source</Filter></ClCompile>
+    <ClCompile Include="maro_CodeDiagnostics.cpp"><Filter>maro_Source</Filter></ClCompile>
+    <ClCompile Include="maro_DiagnosticGuidance.cpp"><Filter>maro_Source</Filter></ClCompile>
     <ClCompile Include="maro_Engine.cpp"><Filter>maro_Source</Filter></ClCompile>
     <ClCompile Include="maro_Project.cpp"><Filter>maro_Source</Filter></ClCompile>
     <ClCompile Include="maro_SourceInsight.cpp"><Filter>maro_Source</Filter></ClCompile>
@@ -33,6 +35,9 @@
     <ClInclude Include="maro_VisualStudio.hpp"><Filter>maro_Header</Filter></ClInclude>
     <ClInclude Include="maro_Models.hpp"><Filter>maro_Header</Filter></ClInclude>
     <ClInclude Include="maro_FixApply.hpp"><Filter>maro_Header</Filter></ClInclude>
+    <ClInclude Include="maro_CodeDiagnostics.hpp"><Filter>maro_Header</Filter></ClInclude>
+    <ClInclude Include="maro_DiagnosticLinks.hpp"><Filter>maro_Header</Filter></ClInclude>
+    <ClInclude Include="maro_DiagnosticGuidance.hpp"><Filter>maro_Header</Filter></ClInclude>
     <ClInclude Include="maro_Text.hpp"><Filter>maro_Header</Filter></ClInclude>
     <ClInclude Include="maro_Process.hpp"><Filter>maro_Header</Filter></ClInclude>
     <ClInclude Include="maro_Analyzer.hpp"><Filter>maro_Header</Filter></ClInclude>

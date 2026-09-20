@@ -111,6 +111,7 @@ private:
     HRESULT maro_EnsureSourceWindow(bool maro_show = true);
     void maro_Navigate(const maro_SourceItem& maro_item);
     void maro_ApplyFix(const Maro_Diagnostic& maro_diagnostic);
+    void maro_NavigateDiagnostic(const Maro_Diagnostic& maro_diagnostic);
     void maro_RequestInsight(const Maro_SourceRequest& maro_request);
     HRESULT maro_StartTrace();
     void SetDiagnosticPending(const std::wstring& path, const wchar_t* status);
@@ -150,6 +151,8 @@ private:
     std::unique_ptr<maro_InsightWorker> maro_insightWorker_;
     std::optional<maro_SourceItem> maro_navigation_;
     std::optional<Maro_Diagnostic> maro_pendingFix_;
+    std::optional<Maro_Diagnostic> maro_pendingDiagnosticNavigation_;
+    std::wstring maro_pendingDocumentation_;
     Maro_SourceRequest maro_fixSource_;
     std::uint64_t maro_navigationVersion_ = 0;
     std::uint64_t maro_insightVersion_ = 0, maro_insightHash_ = 0;

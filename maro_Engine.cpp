@@ -1,4 +1,5 @@
 #include "maro_Engine.hpp"
+#include "maro_CodeDiagnostics.hpp"
 
 #include "maro_Analyzer.hpp"
 #include "maro_Process.hpp"
@@ -135,7 +136,7 @@ Maro_Diagnostic Maro_MakeIdeFinding(
     diagnostic.findingId = L"Maro_IDE_" + std::to_wstring(request.sourceVersion) + L"_" + code;
     diagnostic.code = std::move(code);
     diagnostic.analyzer = L"CLive_Maro";
-    diagnostic.analyzerVersion = L"2.2.0";
+    diagnostic.analyzerVersion = L"2.3.4";
     diagnostic.severity = severity;
     diagnostic.evidence = evidence;
     diagnostic.friendlyMessage = std::move(message);
@@ -736,6 +737,7 @@ void Maro_Engine::maro_ProcessProject(const Maro_PendingWork& maro_work,
     const auto maro_generated = maro_BuildGeneratedSource(maro_work.request);
     maro_result.diagnostics = Maro_ParseCompilerDiagnostics(maro_project.maro_buildOutput,
         maro_work.request, maro_generated, L"MSBuild", {}, maro_work.request.sourcePath);
+    maro_ImproveDiagnostics(maro_work.request, maro_result.diagnostics);
     if (!maro_project.maro_success || !maro_work.request.execute || maro_project.maro_executablePath.empty())
     {
         Publish(maro_work, std::move(maro_result));

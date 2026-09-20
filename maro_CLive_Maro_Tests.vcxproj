@@ -102,6 +102,10 @@
     <ClCompile Include="maro_Text.cpp" />
     <ClCompile Include="maro_Process.cpp" />
     <ClCompile Include="maro_Analyzer.cpp" />
+    <ClCompile Include="maro_CodeDiagnostics.cpp" />
+    <ClCompile Include="maro_CodeDiagnostics_Tests.cpp" />
+    <ClCompile Include="maro_DiagnosticGuidance.cpp" />
+    <ClCompile Include="maro_DiagnosticGuidance_Tests.cpp" />
     <ClCompile Include="maro_Engine.cpp" />
     <ClCompile Include="maro_Project.cpp" />
     <ClCompile Include="maro_SourceInsight.cpp" />
@@ -120,6 +124,9 @@
   <ItemGroup>
     <ClInclude Include="maro_Models.hpp" />
     <ClInclude Include="maro_FixApply.hpp" />
+    <ClInclude Include="maro_CodeDiagnostics.hpp" />
+    <ClInclude Include="maro_DiagnosticLinks.hpp" />
+    <ClInclude Include="maro_DiagnosticGuidance.hpp" />
     <ClInclude Include="maro_Text.hpp" />
     <ClInclude Include="maro_Process.hpp" />
     <ClInclude Include="maro_Analyzer.hpp" />

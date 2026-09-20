@@ -55,6 +55,8 @@ public:
     void maro_ToggleExpanded();
     void maro_SetRunCallback(std::function<void()> maro_run);
     void maro_SetFixCallback(std::function<void(const Maro_Diagnostic&)> maro_fix);
+    void maro_SetNavigateCallback(std::function<void(const Maro_Diagnostic&)> maro_navigate);
+    void maro_SetDocumentationCallback(std::function<void(const Maro_Diagnostic&)> maro_documentation);
 
 private:
     static LRESULT CALLBACK maro_WindowProc(HWND window, UINT message, WPARAM wparam, LPARAM lparam) noexcept;
@@ -83,8 +85,8 @@ private:
     void maro_Layout();
     void maro_Refresh();
     bool maro_CanInput() const;
-    std::optional<std::size_t> maro_HitFix(POINT maro_point) const;
-    void maro_InvokeFix(std::size_t maro_index);
+    std::optional<std::size_t> maro_HitLink(POINT maro_point) const;
+    void maro_InvokeLink(std::size_t maro_index);
     void maro_UpdateFont();
 
     HWND maro_window_ = nullptr;
@@ -127,9 +129,12 @@ private:
     std::function<void()> maro_expandCallback_;
     std::function<void()> maro_runCallback_;
     std::function<void(const Maro_Diagnostic&)> maro_applyFix_;
-    struct maro_FixLink { long maro_start; long maro_end; Maro_Diagnostic maro_diagnostic; };
-    std::vector<maro_FixLink> maro_fixLinks_;
-    std::optional<std::size_t> maro_pressedFix_;
+    std::function<void(const Maro_Diagnostic&)> maro_navigate_;
+    std::function<void(const Maro_Diagnostic&)> maro_documentation_;
+    enum class maro_LinkKind { maro_Fix, maro_Navigate, maro_Documentation };
+    struct maro_Link { long maro_start; long maro_end; maro_LinkKind maro_kind; Maro_Diagnostic maro_diagnostic; };
+    std::vector<maro_Link> maro_links_;
+    std::optional<std::size_t> maro_pressedLink_;
     std::wstring maro_path_;
     std::wstring maro_output_;
     std::wstring maro_status_ = L"C/C++ 문서를 열어 주세요.";
