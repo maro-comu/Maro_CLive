@@ -32,8 +32,8 @@ void maro_TestSourceInsight(const std::function<void(bool, std::string_view)>& m
         maro_variable->maro_path == L"C:\\sample\\maro_main.c", "source insight variable links to declaring file and column");
     maro_expect(maro_variable && maro_variable->maro_detail.find(L"실행값 아님") != std::wstring::npos,
         "source insight initializer is explicitly not a runtime value");
-    maro_expect(maro_basic.maro_lines.size() == 7 && maro_basic.maro_lines[3].maro_text == L"    int result = left + right;" &&
-        !maro_basic.maro_lines[3].maro_explanation.empty(), "source insight has a per-line preview without printf");
+    maro_expect(maro_basic.maro_lines.size() == 7 && maro_basic.maro_lines[3].maro_text == L"    int result = left + right;",
+        "source insight retains source change detection without visualization explanations");
 
     const auto maro_incomplete = maro_InspectSource(L"int main() {\n    int count =\n", L"maro_incomplete.c");
     const auto* maro_count = maro_FindInsightItem(maro_incomplete, L"count", maro_SourceItemKind::maro_Variable);

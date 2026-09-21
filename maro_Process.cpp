@@ -1,5 +1,4 @@
 #include "maro_Process.hpp"
-#include "maro_Trace.hpp"
 
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
@@ -473,7 +472,7 @@ Maro_ProcessResult Maro_RunProcess(
         }
     } maro_inputGuard{request.maro_interactiveInput};
 
-    if (request.executable.empty() || (request.maro_trace && request.maro_traceSource.empty()))
+    if (request.executable.empty())
     {
         result.win32Error = ERROR_INVALID_PARAMETER;
         return result;
@@ -502,10 +501,8 @@ Maro_ProcessResult Maro_RunProcess(
     }
 
     Maro_UniqueHandle job(CreateJobObjectW(nullptr, nullptr));
-    auto maro_jobLimits = request.limits;
-    if (request.maro_trace) maro_jobLimits.cpuMilliseconds = 0;
-    const bool maro_background = request.maro_background && !request.maro_trace;
-    if (!job || !Maro_ConfigureJob(job.get(), maro_jobLimits, maro_background))
+    const bool maro_background = request.maro_background;
+    if (!job || !Maro_ConfigureJob(job.get(), request.limits, maro_background))
     {
         result.win32Error = GetLastError();
         return result;
@@ -571,7 +568,6 @@ Maro_ProcessResult Maro_RunProcess(
     {
         creationFlags |= CREATE_NO_WINDOW;
     }
-    if (request.maro_trace) creationFlags |= DEBUG_ONLY_THIS_PROCESS;
     if (maro_background) creationFlags |= BELOW_NORMAL_PRIORITY_CLASS;
 
     PROCESS_INFORMATION processInformation{};
@@ -594,15 +590,6 @@ Maro_ProcessResult Maro_RunProcess(
 
     Maro_UniqueHandle process(processInformation.hProcess);
     Maro_UniqueHandle thread(processInformation.hThread);
-    struct maro_DebugGuard
-    {
-        DWORD maro_pid;
-        bool maro_attached;
-        ~maro_DebugGuard()
-        {
-            if (maro_attached) DebugActiveProcessStop(maro_pid);
-        }
-    } maro_debugGuard{processInformation.dwProcessId, request.maro_trace != nullptr};
     stdinRead.reset();
     stdoutWrite.reset();
     stderrWrite.reset();
@@ -621,7 +608,7 @@ Maro_ProcessResult Maro_RunProcess(
         TerminateJobObject(job.get(), result.win32Error);
         return result;
     }
-    if (request.maro_trace || !request.maro_interactiveInput || !request.limits.maro_idleMilliseconds)
+    if (!request.maro_interactiveInput || !request.limits.maro_idleMilliseconds)
         thread.reset();
 
     std::atomic<bool> outputExceeded{false};
@@ -674,11 +661,6 @@ Maro_ProcessResult Maro_RunProcess(
         {
             request.maro_interactiveInput->maro_Close();
         }
-        if (maro_debugGuard.maro_attached)
-        {
-            DebugActiveProcessStop(maro_debugGuard.maro_pid);
-            maro_debugGuard.maro_attached = false;
-        }
         process.reset();
         job.reset();
         if (stdinWriter.joinable())
@@ -700,31 +682,7 @@ Maro_ProcessResult Maro_RunProcess(
     const ULONGLONG startedAt = GetTickCount64();
     ULONGLONG maro_idleSince = startedAt, maro_sampleAt = startedAt;
     LONGLONG maro_previousCpu = 0;
-    if (request.maro_trace)
-    {
-        const auto maro_traceResult = maro_RunDebugLoop(process.get(), processInformation.dwProcessId,
-            request.executable, request.maro_traceSource, request.maro_trace, [&] {
-                bool maro_cancel = false;
-                try { maro_cancel = cancelled && cancelled(); }
-                catch (...) { maro_cancel = true; }
-                return maro_cancel || outputExceeded.load(std::memory_order_acquire);
-            });
-        maro_debugGuard.maro_attached = false;
-        if (maro_traceResult.maro_cancelled)
-            result.termination = outputExceeded.load(std::memory_order_acquire)
-                ? Maro_ProcessTermination::OutputLimit : Maro_ProcessTermination::Cancelled;
-        else if (maro_traceResult.maro_error)
-        {
-            result.termination = Maro_ProcessTermination::InternalError;
-            result.win32Error = maro_traceResult.maro_error;
-        }
-        if (maro_traceResult.maro_exited)
-        {
-            result.hasExitCode = true;
-            result.exitCode = maro_traceResult.maro_exitCode;
-        }
-    }
-    else for (;;)
+    for (;;)
     {
         const DWORD waitResult = WaitForSingleObject(process.get(), 20);
         if (waitResult == WAIT_OBJECT_0)
@@ -810,7 +768,7 @@ Maro_ProcessResult Maro_RunProcess(
     }
     if (result.termination == Maro_ProcessTermination::Exited &&
         result.hasExitCode && result.exitCode != 0 &&
-        request.limits.activeProcessLimit == 1 && request.limits.cpuMilliseconds > 0 && !request.maro_trace)
+        request.limits.activeProcessLimit == 1 && request.limits.cpuMilliseconds > 0)
     {
         JOBOBJECT_BASIC_ACCOUNTING_INFORMATION accounting{};
         if (QueryInformationJobObject(

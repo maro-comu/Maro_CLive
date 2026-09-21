@@ -286,7 +286,6 @@ void Maro_CLive_Maro_Package::ProcessUi() noexcept
                 updateNotice_.Push(maro_automatic_ ? L"자동 실행 켜짐" : L"자동 실행 꺼짐 · 외부 컴파일과 실행을 중지했습니다.");
                 ScheduleLiveAnalysis();
             }
-            if ((maro_commands & 64) != 0) maro_commandResult = maro_StartTrace();
             if (maro_navigation_)
             {
                 auto maro_item = std::move(*maro_navigation_);
@@ -304,8 +303,6 @@ void Maro_CLive_Maro_Package::ProcessUi() noexcept
                 maro_EnsureSourceWindow();
                 maro_EnsureLiveOutput();
             }
-            if ((maro_commands & 256) != 0 && SUCCEEDED(maro_EnsureLiveOutput()))
-                maro_liveOutput_->maro_ToggleExpanded();
             if ((maro_commands & 4) != 0 && !shuttingDown_)
             {
                 maro_commandResult = StartUpdate();
@@ -333,11 +330,6 @@ void Maro_CLive_Maro_Package::ProcessUi() noexcept
                     if (maro_sourceWindow_) maro_sourceWindow_->maro_SetSource(std::move(maro_snapshot->maro_insight));
                     maro_displayedInsightVersion_ = maro_insightVersion_;
                 }
-            }
-            {
-                std::optional<maro_TraceSnapshot> maro_snapshot;
-                { std::lock_guard maro_lock(maro_traceMutex_); maro_snapshot.swap(maro_traceSnapshot_); }
-                if (maro_snapshot && maro_liveOutput_) maro_liveOutput_->maro_SetTrace(*maro_snapshot);
             }
             std::optional<Maro_ResultEnvelope> snapshot;
             {
@@ -512,9 +504,6 @@ void Maro_CLive_Maro_Package::maro_ConfigurePane(maro_DiagnosticWindow* maro_pan
         updateNotice_.Push(L"인코딩을 변경했습니다. F5로 다시 실행하세요.");
     });
     maro_pane->maro_SetEncoding(maro_codePage_);
-    maro_pane->maro_SetTraceCallbacks([this] { maro_pendingCommands_.fetch_or(64); },
-        [this] { if (maro_trace_) maro_trace_->maro_Step(); },
-        [this] { if (maro_trace_) maro_trace_->maro_Continue(); });
 }
 
 HRESULT Maro_CLive_Maro_Package::maro_EnsureLiveOutput(bool maro_show)
@@ -710,32 +699,6 @@ void Maro_CLive_Maro_Package::maro_NavigateDiagnostic(const Maro_Diagnostic& mar
     maro_item.maro_line = maro_diagnostic.range.start.line;
     maro_item.maro_column = maro_diagnostic.range.start.column;
     maro_Navigate(maro_item);
-}
-
-HRESULT Maro_CLive_Maro_Package::maro_StartTrace()
-{
-    if (maro_projectMode_)
-    {
-        updateNotice_.Push(L"줄별 실행은 파일 모드의 MSVC x64 코드에서 지원합니다. 프로젝트는 실행 출력과 코드 미리보기를 사용하세요.");
-        return S_OK;
-    }
-    Maro_SourceRequest maro_request;
-    std::wstring maro_path;
-    if (FAILED(ReadActiveSource(maro_request, maro_path))) return S_FALSE;
-    const auto maro_version = maro_request.sourceVersion;
-    const auto maro_sourcePath = maro_request.sourcePath;
-    maro_request.maro_trace = std::make_shared<maro_TraceSession>([this, maro_version, maro_sourcePath](const maro_TraceSnapshot& maro_snapshot) {
-        if (runDiagnosticVersion_.load(std::memory_order_acquire) != maro_version) return;
-        auto maro_mapped = maro_snapshot;
-        if (maro_mapped.maro_line) maro_mapped.maro_file = maro_sourcePath;
-        for (auto& maro_frame : maro_mapped.maro_frames)
-            if (_wcsicmp(maro_frame.maro_file.c_str(), maro_snapshot.maro_file.c_str()) == 0)
-                maro_frame.maro_file = maro_sourcePath;
-        std::lock_guard maro_lock(maro_traceMutex_);
-        if (runDiagnosticVersion_.load(std::memory_order_acquire) == maro_version) maro_traceSnapshot_ = std::move(maro_mapped);
-    });
-    maro_stopped_ = false;
-    return maro_SubmitSource(std::move(maro_request), maro_path, true, true);
 }
 
 STDMETHODIMP Maro_CLive_Maro_Package::QueryClose(BOOL* canClose)
@@ -1037,12 +1000,6 @@ void Maro_CLive_Maro_Package::ScheduleLiveAnalysis() noexcept
 void Maro_CLive_Maro_Package::maro_CancelLiveWork() noexcept
 {
     runDiagnosticVersion_.store(0, std::memory_order_release);
-    const bool maro_hadTrace = maro_trace_ != nullptr;
-    if (maro_trace_) maro_trace_->maro_Cancel();
-    maro_trace_.reset();
-    { std::lock_guard maro_lock(maro_traceMutex_); maro_traceSnapshot_.reset(); }
-    if (maro_hadTrace && diagnosticWindow_) diagnosticWindow_->maro_SetTrace({});
-    if (maro_hadTrace && maro_liveOutput_) maro_liveOutput_->maro_SetTrace({});
     if (maro_input_) maro_input_->maro_Close();
     maro_input_.reset();
     maro_runningVersion_.store(0, std::memory_order_release);
@@ -1083,7 +1040,7 @@ void Maro_CLive_Maro_Package::RunLiveAnalysis() noexcept
             }
             return;
         }
-        if (maro_stopped_ || maro_trace_ || !maro_automatic_) return;
+        if (maro_stopped_ || !maro_automatic_) return;
         if (maro_projectMode_ && maro_automatic_ && FAILED(maro_ReadProject(request))) return;
 
         const std::uint64_t hash = Maro_HashSource(request.sourceText + request.maro_projectPath +
@@ -1367,7 +1324,6 @@ HRESULT Maro_CLive_Maro_Package::maro_SubmitSource(
     request.execute = execute;
     request.maro_background = !show;
     request.maro_outputCodePage = maro_codePage_;
-    if (request.maro_trace) maro_trace_ = request.maro_trace;
     SetDiagnosticPending(path, L"검사 중...");
     maro_fixSource_.sourcePath = request.sourcePath;
     maro_fixSource_.sourceText = request.sourceText;
@@ -1444,10 +1400,10 @@ void Maro_CLive_Maro_Package::RunUpdate() noexcept
     const HRESULT initialized = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
     try
     {
-        const auto check = maro_CheckForUpdate({2, 3, 4}, &updateCancelled_);
+        const auto check = maro_CheckForUpdate({2, 3, 5}, &updateCancelled_);
         if (check.status == Maro_UpdateCheckStatus::Current)
         {
-            QueueUpdateMessage(L"최신 버전입니다. (v2.3.4)\r\n");
+            QueueUpdateMessage(L"최신 버전입니다. (v2.3.5)\r\n");
         }
         else if (check.status == Maro_UpdateCheckStatus::Failed)
         {
@@ -1599,8 +1555,6 @@ void Maro_CLive_Maro_Package::WriteRun(std::wstring_view text) noexcept
 
 void Maro_CLive_Maro_Package::Shutdown() noexcept
 {
-    if (maro_trace_) maro_trace_->maro_Cancel();
-    maro_trace_.reset();
     maro_insightWorker_.reset();
     if (maro_input_) maro_input_->maro_Close();
     maro_input_.reset();

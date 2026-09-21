@@ -14,7 +14,8 @@ bool maro_TestDiagnosticGuidance()
     for (const auto* maro_code : maro_codes)
     {
         const auto maro_message = maro_CompilerGuidance(maro_code, L"raw compiler message");
-        if (maro_message.empty() || maro_message == L"raw compiler message" || maro_message.size() > 240 ||
+        if (maro_message.empty() || maro_message == L"raw compiler message" || maro_message.size() > 140 ||
+            maro_message.find_first_of(L"\r\n") != std::wstring::npos ||
             maro_message.find(L'\0') != std::wstring::npos || maro_message.find(L"문법을 완성") != std::wstring::npos || maro_message.find(L"클릭") != std::wstring::npos)
             return false;
     }
@@ -27,7 +28,7 @@ bool maro_TestDiagnosticGuidance()
         !maro_has(L"C2143", L"구문 오류: ']'이(가) ';' 앞에 없습니다.", L"닫는 기호 ']'") ||
         !maro_has(L"C2143", L"syntax error: missing '(' before 'value'", L"여는 기호 '('") ||
         !maro_has(L"C2146", L"syntax error: missing ',' before identifier 'value'", L"쉼표") ||
-        !maro_has(L"C2143", L"unexpected message without quoted tokens", L"단정할 수는 없습니다") ||
+        !maro_has(L"C2143", L"unexpected message without quoted tokens", L"선언과 괄호 짝") ||
         !maro_has(L"C2065", L"'maro_missing': undeclared identifier", L"maro_missing") ||
         !maro_has(L"C2065", L"'한글변수': 선언되지 않은 식별자입니다.", L"한글변수") ||
         !maro_has(L"C4130", L"", L"내용 비교가 목적이면") ||
@@ -39,27 +40,40 @@ bool maro_TestDiagnosticGuidance()
         !maro_has(L"C4018", L"", L"음수 가능성") ||
         !maro_has(L"C4996", L"'strcpy': This function or variable may be unsafe.", L"버퍼 크기 인수") ||
         !maro_has(L"C4996", L"'strcpy': 이 함수 또는 변수는 안전하지 않을 수 있습니다.", L"버퍼 크기 인수") ||
-        !maro_has(L"C4996", L"'oldApi': use newApi instead", L"무조건 _s") ||
+        !maro_has(L"C4996", L"'oldApi': use newApi instead", L"API 제공자") ||
         !maro_has(L"C4996", L"'oldApi': use newApi instead", L"newApi") ||
         !maro_has(L"C4996", L"'my_scanf_wrapper': deprecated; use parse_record instead", L"parse_record") ||
         !maro_has(L"C4996", L"'strcpy': custom deprecated declaration", L"custom deprecated declaration") ||
-        !maro_has(L"C4477", L"'printf': format string '%d' requires an argument of type 'int'", L"unsigned int는 %u") ||
-        !maro_has(L"C4477", L"'printf': format string '%d' requires an argument of type 'int'", L"void*") ||
-        !maro_has(L"C4477", L"'scanf': format string '%f' requires an argument of type 'float *'", L"double*는 %lf") ||
-        !maro_has(L"C4477", L"'std::scanf': wrong argument type", L"int*는 %d") ||
+        !maro_has(L"C4477", L"'printf': format string '%d' requires an argument of type 'int'", L"'%d'에는 int 값") ||
+        !maro_has(L"C4477", L"'printf': format string '%u' requires an argument of type 'unsigned int'", L"'%u'에는 unsigned int 값") ||
+        !maro_has(L"C4477", L"'printf': format string '%f' requires an argument of type 'double'", L"'%f'에는 double 값") ||
+        !maro_has(L"C4477", L"'printf': format string '%p' requires an argument of type 'void *'", L"void* 객체 주소를") ||
+        !maro_has(L"C4477", L"'scanf': format string '%f' requires an argument of type 'float *'", L"'%f'에는 float* 주소") ||
+        !maro_has(L"C4477", L"'scanf': format string '%lf' requires an argument of type 'double *'", L"'%lf'에는 double* 주소") ||
+        !maro_has(L"C4477", L"'std::scanf': format string '%d' requires an argument of type 'int *'", L"'%d'에는 int* 주소") ||
+        !maro_has(L"C4477", L"'std::scanf': wrong argument type", L"변수의 주소 형식") ||
+        !maro_has(L"C4477", L"'printf': format string '%zu' requires another argument type", L"길이 지정자") ||
         !maro_has(L"C4477", L"'my_printf_wrapper': wrong argument type", L"함수 문서") ||
         !maro_has(L"C4701", L"potentially uninitialized local variable 'maro_value' used", L"maro_value") ||
         !maro_has(L"C6031", L"Return value ignored: 'maro_read' could return unexpected value", L"maro_read") ||
-        !maro_has(L"C6031", L"", L"모든 API에서 0이 성공") ||
+        !maro_has(L"C6031", L"", L"API 문서의 성공·실패 기준") ||
         !maro_has(L"C6385", L"", L"원소 개수 미만") ||
         !maro_has(L"C6386", L"", L"'\\0'을 넣을 공간도 남기세요") ||
-        !maro_has(L"C6054", L"", L"'\\0'이 없을 수 있습니다") ||
+        !maro_has(L"C6054", L"", L"'\\0'을 넣은 뒤") ||
         !maro_has(L"C6054", L"", L"문자열 함수에 전달하세요") ||
         !maro_has(L"C6011", L"", L"NULL이면 오류를 처리")) return false;
     if (maro_CompilerGuidance(L"-Wcustom", L" \tno matching overloaded function  \r\ncompiler context") !=
         L"no matching overloaded function") return false;
     if (maro_CompilerGuidance(L"C9999", L"\n\n useful detail\nrest") != L"useful detail") return false;
-    if (maro_CompilerGuidance(L"C4700", L"'한글변수': uninitialized local variable used").find(L".\n") == std::wstring::npos) return false;
+    if (maro_CompilerGuidance(L"C4700", L"'한글변수': uninitialized local variable used").find_first_of(L"\r\n") != std::wstring::npos) return false;
+    if (maro_CompilerGuidance(L"C2143", L"unexpected message without quoted tokens").find(L"';'") != std::wstring::npos) return false;
+    if (maro_CompilerGuidance(L"C4996", L"'oldApi': use newApi instead").find(L"_s") != std::wstring::npos) return false;
+    if (maro_CompilerGuidance(L"C4477", L"'my_printf_wrapper': wrong argument type").find(L"'%d'") != std::wstring::npos) return false;
+    for (const auto* maro_code : maro_codes)
+    {
+        const auto maro_message = maro_CompilerGuidance(maro_code, L"'" + std::wstring(90, L'x') + L"': " + std::wstring(200, L'y'));
+        if (maro_message.size() > 140 || maro_message.find_first_of(L"\r\n") != std::wstring::npos) return false;
+    }
     if (maro_CompilerGuidance(L"", L" \t\r\n").empty()) return false;
     if (maro_CompilerGuidance(L"unknown", std::wstring(8192, L'x')).size() > 1024) return false;
     return true;

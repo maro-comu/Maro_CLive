@@ -9,7 +9,6 @@
 
 namespace
 {
-constexpr int maro_expandId = 105;
 constexpr int maro_inputId = 106;
 constexpr int maro_sendId = 107;
 constexpr int maro_eofId = 108;
@@ -17,17 +16,6 @@ constexpr int maro_stopId = 109;
 constexpr int maro_projectId = 110;
 constexpr int maro_automaticId = 111;
 constexpr int maro_encodingId = 112;
-constexpr int maro_dockedPreviewId = 113;
-constexpr int maro_sourceId = 114;
-constexpr int maro_explanationId = 115;
-constexpr int maro_visualizationId = 116;
-constexpr int maro_previousId = 117;
-constexpr int maro_nextId = 118;
-constexpr int maro_traceStartId = 119;
-constexpr int maro_traceStepId = 120;
-constexpr int maro_traceContinueId = 121;
-constexpr int maro_visualLabelId = 122;
-constexpr int maro_timelineId = 123;
 constexpr int maro_hintId = 124;
 constexpr std::size_t maro_outputLimit = 64 * 1024;
 
@@ -90,16 +78,6 @@ unsigned maro_EncodingAt(LRESULT maro_selection)
     return maro_selection >= 0 && maro_selection < 4 ? maro_codePages[maro_selection] : 0;
 }
 
-void maro_HashVariable(std::size_t& maro_hash, const maro_TraceVariable& maro_variable)
-{
-    maro_HashText(maro_hash, maro_variable.maro_name);
-    maro_HashText(maro_hash, maro_variable.maro_value);
-    maro_HashText(maro_hash, maro_variable.maro_type);
-    maro_hash ^= static_cast<std::size_t>(maro_variable.maro_available);
-    for (const auto maro_dimension : maro_variable.maro_dimensions) maro_hash ^= maro_dimension + (maro_hash << 6) + (maro_hash >> 2);
-    for (const auto& maro_child : maro_variable.maro_children) maro_HashVariable(maro_hash, maro_child);
-}
-
 std::wstring maro_ReadInput(HWND maro_parent)
 {
     const HWND maro_input = GetDlgItem(maro_parent, maro_inputId);
@@ -152,7 +130,6 @@ STDMETHODIMP maro_DiagnosticWindow::CreatePaneWindow(
         return E_POINTER;
     }
     *window = nullptr;
-    maro_closing_ = false;
     if (maro_window_ != nullptr)
     {
         *window = maro_window_;
@@ -190,8 +167,6 @@ STDMETHODIMP maro_DiagnosticWindow::GetDefaultSize(SIZE* size)
 
 STDMETHODIMP maro_DiagnosticWindow::ClosePane()
 {
-    maro_closing_ = true;
-    maro_CloseExpanded();
     if (maro_window_ != nullptr)
     {
         DestroyWindow(maro_window_);
@@ -224,15 +199,13 @@ STDMETHODIMP maro_DiagnosticWindow::TranslateAccelerator(LPMSG message)
     if (message != nullptr && (message->message == WM_KEYDOWN || message->message == WM_SYSKEYDOWN) &&
         maro_HandleKey(GetParent(message->hwnd), message->wParam)) return S_OK;
     if (message != nullptr && message->message == WM_KEYDOWN && message->wParam == VK_RETURN &&
-        (message->hwnd == GetDlgItem(maro_window_, maro_inputId) ||
-            (maro_expandedWindow_ && message->hwnd == GetDlgItem(maro_expandedWindow_, maro_inputId))))
+        message->hwnd == GetDlgItem(maro_window_, maro_inputId))
     {
         maro_SubmitInput(GetParent(message->hwnd));
         return S_OK;
     }
     if (message != nullptr && message->message == WM_KEYDOWN && message->wParam == 'A' &&
-        GetKeyState(VK_CONTROL) < 0 && (message->hwnd == maro_summary_ || message->hwnd == maro_issues_ ||
-            message->hwnd == maro_expandedOutput_))
+        GetKeyState(VK_CONTROL) < 0 && (message->hwnd == maro_summary_ || message->hwnd == maro_issues_))
     {
         SendMessageW(message->hwnd, EM_SETSEL, 0, -1);
         return S_OK;
@@ -253,18 +226,6 @@ void maro_DiagnosticWindow::maro_SetOutputMode(bool maro_enabled)
 {
     if (maro_window_) return;
     maro_outputMode_ = maro_enabled;
-}
-
-void maro_DiagnosticWindow::maro_SetExpandCallback(std::function<void()> maro_expand)
-{
-    maro_expandCallback_ = std::move(maro_expand);
-}
-
-void maro_DiagnosticWindow::maro_ToggleExpanded()
-{
-    if (maro_expandedWindow_) maro_CloseExpanded();
-    else if (maro_outputMode_) maro_ExpandOutput();
-    else if (maro_expandCallback_) maro_expandCallback_();
 }
 
 void maro_DiagnosticWindow::maro_SetRunCallback(std::function<void()> maro_run)
@@ -342,12 +303,6 @@ void maro_DiagnosticWindow::maro_SetSessionState(bool maro_running, bool maro_in
     if (maro_running && !maro_running_) maro_inputSubmitted_ = false;
     maro_running_ = maro_running;
     maro_inputOpen_ = maro_running && maro_inputOpen;
-    if (!maro_running && maro_trace_.maro_waiting)
-    {
-        maro_trace_.maro_waiting = false;
-        maro_trace_.maro_message = L"추적 종료 · 마지막 관측값";
-        maro_UpdateVisualization();
-    }
     maro_UpdateSessionControls();
 }
 
@@ -366,7 +321,6 @@ void maro_DiagnosticWindow::maro_SetProjectMode(bool maro_enabled)
 
 void maro_DiagnosticWindow::maro_SetSource(maro_SourceInsight maro_source)
 {
-    const bool maro_hadSource = !maro_source_.maro_lines.empty();
     std::size_t maro_hash = maro_source.maro_lines.size();
     maro_HashText(maro_hash, maro_source.maro_path);
     for (const auto& maro_line : maro_source.maro_lines)
@@ -376,64 +330,6 @@ void maro_DiagnosticWindow::maro_SetSource(maro_SourceInsight maro_source)
     maro_sourceHash_ = maro_hash;
     maro_source_ = std::move(maro_source);
     maro_inputSubmitted_ = false;
-    maro_previewLine_ = 0;
-    if (_wcsicmp(maro_trace_.maro_file.c_str(), maro_source_.maro_path.c_str()) != 0)
-    {
-        maro_trace_ = {};
-        maro_traceHash_ = 0;
-        maro_history_.clear();
-        maro_historyIndex_ = 0;
-        maro_visualOffset_ = 0;
-    }
-    else if (maro_trace_.maro_line && maro_trace_.maro_line <= maro_source_.maro_lines.size())
-        maro_previewLine_ = maro_trace_.maro_line - 1;
-    maro_UpdateVisualization();
-    maro_UpdateSessionControls();
-    if (maro_hadSource != !maro_source_.maro_lines.empty()) maro_Layout();
-}
-
-void maro_DiagnosticWindow::maro_SetTrace(const maro_TraceSnapshot& maro_trace)
-{
-    std::size_t maro_hash = maro_trace.maro_line + static_cast<std::size_t>(maro_trace.maro_waiting) * 65537;
-    maro_HashText(maro_hash, maro_trace.maro_file);
-    maro_HashText(maro_hash, maro_trace.maro_function);
-    maro_HashText(maro_hash, maro_trace.maro_message);
-    for (const auto& maro_variable : maro_trace.maro_variables)
-        maro_HashVariable(maro_hash, maro_variable);
-    for (const auto& maro_frame : maro_trace.maro_frames)
-    {
-        maro_HashText(maro_hash, maro_frame.maro_file);
-        maro_HashText(maro_hash, maro_frame.maro_function);
-        maro_hash ^= maro_frame.maro_line;
-    }
-    if (maro_traceHash_ == maro_hash) return;
-    maro_traceHash_ = maro_hash;
-    maro_trace_ = maro_trace;
-    if (maro_outputMode_ && maro_trace.maro_line > 0 && maro_trace.maro_waiting)
-    {
-        if (maro_history_.size() == 256) maro_history_.pop_front();
-        maro_history_.push_back(maro_trace);
-        maro_historyIndex_ = maro_history_.size() - 1;
-    }
-    else if (maro_trace.maro_line == 0 && maro_trace.maro_message.empty())
-    {
-        maro_history_.clear();
-        maro_historyIndex_ = 0;
-        maro_visualOffset_ = 0;
-    }
-    if (maro_trace.maro_line > 0 && maro_trace.maro_line <= maro_source_.maro_lines.size() &&
-        _wcsicmp(maro_trace.maro_file.c_str(), maro_source_.maro_path.c_str()) == 0)
-        maro_previewLine_ = maro_trace.maro_line - 1;
-    maro_UpdateVisualization();
-    maro_UpdateSessionControls();
-}
-
-void maro_DiagnosticWindow::maro_SetTraceCallbacks(std::function<void()> maro_start, std::function<void()> maro_step,
-    std::function<void()> maro_continue)
-{
-    maro_startTrace_ = std::move(maro_start);
-    maro_stepTrace_ = std::move(maro_step);
-    maro_continueTrace_ = std::move(maro_continue);
     maro_UpdateSessionControls();
 }
 
@@ -465,25 +361,20 @@ void maro_DiagnosticWindow::maro_SetEncoding(unsigned maro_encoding)
 
 void maro_DiagnosticWindow::maro_UpdateSessionControls()
 {
-    if (!maro_outputMode_) return;
-    for (HWND maro_parent : {maro_window_, maro_expandedWindow_})
-    {
-        if (!maro_parent) continue;
-        const bool maro_canInput = maro_CanInput();
-        EnableWindow(GetDlgItem(maro_parent, maro_inputId), maro_canInput);
-        ShowWindow(GetDlgItem(maro_parent, maro_inputId), maro_canInput &&
-            (maro_parent == maro_expandedWindow_ || !maro_expandedWindow_) ? SW_SHOW : SW_HIDE);
-        EnableWindow(GetDlgItem(maro_parent, maro_stopId), static_cast<bool>(maro_toggleAutomatic_) || static_cast<bool>(maro_stopRun_));
-        maro_SetTextChanged(GetDlgItem(maro_parent, maro_stopId), maro_automatic_ ? L"끄기" : L"켜기");
-        const std::wstring maro_encoding = maro_encoding_ == 65001 ? L"UTF-8" : maro_encoding_ == 949 ? L"CP949" :
-            maro_encoding_ == 1252 ? L"CP1252" : L"자동";
-        const std::wstring maro_hint = (maro_projectMode_ ? L"프로젝트" : L"현재 파일") + std::wstring(L" · ") + maro_encoding +
-            L" · F5 실행 · F10 한 줄 · F9 계속 · Alt+←/→ 기록 · Ctrl+P 모드 · Ctrl+E 인코딩";
-        maro_SetTextChanged(GetDlgItem(maro_parent, maro_hintId), maro_hint);
-        RECT maro_bounds{};
-        GetClientRect(maro_parent, &maro_bounds);
-        maro_LayoutOutput(maro_parent, maro_bounds.bottom);
-    }
+    if (!maro_outputMode_ || !maro_window_) return;
+    const bool maro_canInput = maro_CanInput();
+    EnableWindow(GetDlgItem(maro_window_, maro_inputId), maro_canInput);
+    ShowWindow(GetDlgItem(maro_window_, maro_inputId), maro_canInput ? SW_SHOW : SW_HIDE);
+    EnableWindow(GetDlgItem(maro_window_, maro_stopId), static_cast<bool>(maro_toggleAutomatic_) || static_cast<bool>(maro_stopRun_));
+    maro_SetTextChanged(GetDlgItem(maro_window_, maro_stopId), maro_automatic_ ? L"끄기" : L"켜기");
+    const std::wstring maro_encoding = maro_encoding_ == 65001 ? L"UTF-8" : maro_encoding_ == 949 ? L"CP949" :
+        maro_encoding_ == 1252 ? L"CP1252" : L"자동";
+    const std::wstring maro_hint = (maro_projectMode_ ? L"프로젝트" : L"현재 파일") + std::wstring(L" · ") + maro_encoding +
+        L" · F5 실행 · Ctrl+P 모드 · Ctrl+E 인코딩";
+    maro_SetTextChanged(GetDlgItem(maro_window_, maro_hintId), maro_hint);
+    RECT maro_bounds{};
+    GetClientRect(maro_window_, &maro_bounds);
+    maro_LayoutOutput(maro_window_, maro_bounds.bottom);
 }
 
 bool maro_DiagnosticWindow::maro_CanInput() const
@@ -500,23 +391,6 @@ bool maro_DiagnosticWindow::maro_HandleKey(HWND maro_parent, WPARAM maro_key)
     if (maro_key == VK_F5 && maro_runCallback_)
     {
         maro_runCallback_();
-        return true;
-    }
-    if (maro_key == VK_F10)
-    {
-        maro_HandleCommand(maro_parent, MAKEWPARAM(maro_trace_.maro_waiting ? maro_traceStepId : maro_traceStartId, BN_CLICKED));
-        return true;
-    }
-    if (maro_key == VK_F9)
-    {
-        maro_HandleCommand(maro_parent, MAKEWPARAM(maro_traceContinueId, BN_CLICKED));
-        return true;
-    }
-    if (GetKeyState(VK_MENU) < 0 && (maro_key == VK_LEFT || maro_key == VK_RIGHT))
-    {
-        if (!maro_history_.empty())
-            maro_SelectHistory(maro_key == VK_LEFT ? (maro_historyIndex_ > 0 ? maro_historyIndex_ - 1 : 0) : maro_historyIndex_ + 1);
-        else maro_HandleCommand(maro_parent, MAKEWPARAM(maro_key == VK_LEFT ? maro_previousId : maro_nextId, BN_CLICKED));
         return true;
     }
     if (GetKeyState(VK_CONTROL) >= 0) return false;
@@ -540,21 +414,6 @@ bool maro_DiagnosticWindow::maro_HandleKey(HWND maro_parent, WPARAM maro_key)
     return false;
 }
 
-void maro_DiagnosticWindow::maro_SelectHistory(std::size_t maro_index)
-{
-    if (maro_history_.empty()) return;
-    maro_historyIndex_ = (std::min)(maro_index, maro_history_.size() - 1);
-    const auto& maro_trace = maro_VisibleTrace();
-    if (maro_trace.maro_line && maro_trace.maro_line <= maro_source_.maro_lines.size() &&
-        _wcsicmp(maro_trace.maro_file.c_str(), maro_source_.maro_path.c_str()) == 0) maro_previewLine_ = maro_trace.maro_line - 1;
-    maro_UpdateVisualization();
-}
-
-const maro_TraceSnapshot& maro_DiagnosticWindow::maro_VisibleTrace() const
-{
-    return maro_history_.empty() ? maro_trace_ : maro_history_[(std::min)(maro_historyIndex_, maro_history_.size() - 1)];
-}
-
 void maro_DiagnosticWindow::maro_SubmitInput(HWND maro_parent)
 {
     if (!maro_CanInput()) return;
@@ -564,10 +423,7 @@ void maro_DiagnosticWindow::maro_SubmitInput(HWND maro_parent)
         if (maro_source_.maro_inputPolicy == maro_InputPolicy::maro_SingleLine &&
             (maro_source_.maro_inputAcceptsEmptyLine || maro_text.find_first_not_of(L" \t\r\n\v\f") != std::wstring::npos))
             maro_inputSubmitted_ = true;
-        for (HWND maro_target : {maro_window_, maro_expandedWindow_})
-        {
-            if (maro_target) SetWindowTextW(GetDlgItem(maro_target, maro_inputId), L"");
-        }
+        SetWindowTextW(GetDlgItem(maro_window_, maro_inputId), L"");
         maro_UpdateSessionControls();
     }
 }
@@ -583,22 +439,9 @@ bool maro_DiagnosticWindow::maro_HandleCommand(HWND maro_parent, WPARAM maro_com
         if (maro_changeEncoding_) maro_changeEncoding_(maro_encoding);
         return true;
     }
-    if (maro_id == maro_inputId && HIWORD(maro_command) == EN_CHANGE)
-    {
-        const HWND maro_other = maro_parent == maro_window_ ? maro_expandedWindow_ : maro_window_;
-        if (maro_other)
-        {
-            const auto maro_text = maro_ReadInput(maro_parent);
-            if (maro_text != maro_ReadInput(maro_other)) SetWindowTextW(GetDlgItem(maro_other, maro_inputId), maro_text.c_str());
-        }
-        return true;
-    }
     if (HIWORD(maro_command) != BN_CLICKED) return false;
     switch (maro_id)
     {
-    case maro_expandId:
-        maro_ToggleExpanded();
-        return true;
     case maro_sendId:
         maro_SubmitInput(maro_parent);
         return true;
@@ -619,31 +462,6 @@ bool maro_DiagnosticWindow::maro_HandleCommand(HWND maro_parent, WPARAM maro_com
         return true;
     case maro_automaticId:
         if (maro_toggleAutomatic_) maro_toggleAutomatic_();
-        return true;
-    case maro_previousId:
-    case maro_nextId:
-        if (maro_id == maro_previousId && maro_previewLine_ > 0) --maro_previewLine_;
-        if (maro_id == maro_nextId && maro_previewLine_ + 1 < maro_source_.maro_lines.size()) ++maro_previewLine_;
-        maro_UpdateVisualization();
-        maro_UpdateSessionControls();
-        return true;
-    case maro_traceStartId:
-        if (!maro_trace_.maro_waiting && maro_startTrace_) maro_startTrace_();
-        return true;
-    case maro_traceStepId:
-        if (maro_trace_.maro_waiting && maro_stepTrace_) maro_stepTrace_();
-        if (!maro_history_.empty()) maro_historyIndex_ = maro_history_.size() - 1;
-        maro_trace_.maro_waiting = false;
-        maro_traceHash_ = 0;
-        maro_UpdateVisualization();
-        maro_UpdateSessionControls();
-        return true;
-    case maro_traceContinueId:
-        if (maro_trace_.maro_waiting && maro_continueTrace_) maro_continueTrace_();
-        maro_trace_.maro_waiting = false;
-        maro_traceHash_ = 0;
-        maro_UpdateVisualization();
-        maro_UpdateSessionControls();
         return true;
     default:
         return false;
@@ -698,15 +516,6 @@ LRESULT CALLBACK maro_DiagnosticWindow::maro_InputProc(HWND maro_window, UINT ma
         if (maro_message == WM_GETDLGCODE && maro_wparam == VK_RETURN) return DLGC_WANTALLKEYS;
         if ((maro_message == WM_KEYDOWN || maro_message == WM_SYSKEYDOWN) &&
             maro_instance->maro_HandleKey(GetParent(maro_window), maro_wparam)) return 0;
-        if (GetDlgCtrlID(maro_window) == maro_visualizationId && maro_message == WM_MOUSEWHEEL)
-        {
-            const auto maro_count = maro_instance->maro_VisibleTrace().maro_variables.size();
-            if (GET_WHEEL_DELTA_WPARAM(maro_wparam) > 0)
-                maro_instance->maro_visualOffset_ -= maro_instance->maro_visualOffset_ > 0;
-            else if (maro_instance->maro_visualOffset_ + 1 < maro_count) ++maro_instance->maro_visualOffset_;
-            InvalidateRect(maro_window, nullptr, FALSE);
-            return 0;
-        }
         if (GetDlgCtrlID(maro_window) == maro_inputId && maro_message == WM_KEYDOWN && maro_wparam == VK_RETURN)
         {
             maro_instance->maro_SubmitInput(GetParent(maro_window));
@@ -782,19 +591,13 @@ void maro_DiagnosticWindow::maro_SetResult(const Maro_ResultEnvelope& result)
         }
         details << L"\r";
         const bool maro_hasFix = diagnostic.fix && !diagnostic.fix->edits.empty();
-        if (diagnostic.friendlyMessage.empty() && maro_hasFix)
+        if (maro_hasFix && !diagnostic.fix->description.empty())
             maro_message = maro_DiagnosticText(diagnostic.fix->description);
+        if (!maro_hasFix && !maro_message.empty()) details << L"직접 수정: ";
         const auto maro_start = static_cast<long>(details.tellp());
         details << maro_message;
         if (maro_hasFix && maro_applyFix_ && !maro_message.empty())
-        {
-            const auto maro_problemEnd = diagnostic.code.empty() ? std::wstring::npos : maro_message.find(L'\r');
-            const auto maro_solutionStart = maro_problemEnd == std::wstring::npos ? 0 :
-                maro_message.find_first_not_of(L"\r\n", maro_problemEnd);
-            if (maro_solutionStart != std::wstring::npos)
-                maro_links_.push_back({maro_start + static_cast<long>(maro_solutionStart),
-                    static_cast<long>(details.tellp()), maro_LinkKind::maro_Fix, diagnostic});
-        }
+            maro_links_.push_back({maro_start, static_cast<long>(details.tellp()), maro_LinkKind::maro_Fix, diagnostic});
         if (diagnostic.maro_relatedCount != 0)
             details << L"\r연관 진단 " << diagnostic.maro_relatedCount << L"개 접음";
         details << L"\r\r";
@@ -813,7 +616,6 @@ void maro_DiagnosticWindow::maro_SetNotice(std::wstring text)
 {
     maro_notice_ = std::move(text);
     maro_Refresh();
-    if (maro_expandedWindow_) maro_UpdateVisualization();
 }
 
 void maro_DiagnosticWindow::maro_AppendOutput(std::wstring_view text)
@@ -856,7 +658,7 @@ void maro_DiagnosticWindow::maro_AppendOutput(std::wstring_view text)
         }
         maro_output_.erase(0, removed);
     }
-    maro_UpdateOutput(maro_expandedOutput_ ? maro_expandedOutput_ : maro_summary_, appended, oldLength, removed);
+    maro_UpdateOutput(maro_summary_, appended, oldLength, removed);
 }
 
 void maro_DiagnosticWindow::maro_UpdateOutput(HWND maro_control, std::wstring_view maro_appended,
@@ -903,7 +705,6 @@ void maro_DiagnosticWindow::maro_ClearOutput()
     {
         SetWindowTextW(maro_summary_, L"");
     }
-    if (maro_expandedOutput_ != nullptr) SetWindowTextW(maro_expandedOutput_, L"");
     maro_UpdateSessionControls();
 }
 
@@ -969,7 +770,7 @@ bool maro_DiagnosticWindow::maro_CreateControls()
     {
         maro_summaryLabel_ = create(L"STATIC", L"실시간 출력", SS_LEFT, 101);
         maro_summary_ = create(L"EDIT", L"", WS_TABSTOP | ES_MULTILINE | ES_READONLY | ES_AUTOVSCROLL | ES_AUTOHSCROLL, 102);
-        if (!maro_summaryLabel_ || !maro_summary_ || !maro_CreateOutputControls(maro_window_, false)) return false;
+        if (!maro_summaryLabel_ || !maro_summary_ || !maro_CreateOutputControls(maro_window_)) return false;
     }
     else
     {
@@ -998,7 +799,6 @@ bool maro_DiagnosticWindow::maro_CreateControls()
     maro_displayedDetails_.clear();
     maro_displayedCounts_.clear();
     maro_Refresh();
-    maro_UpdateVisualization();
     maro_Layout();
     return true;
 }
@@ -1060,8 +860,6 @@ LRESULT CALLBACK maro_DiagnosticWindow::maro_WindowProc(HWND window, UINT messag
     }
     if (message == WM_NCDESTROY)
     {
-        instance->maro_closing_ = true;
-        instance->maro_CloseExpanded();
         SetWindowLongPtrW(window, GWLP_USERDATA, 0);
         instance->maro_window_ = nullptr;
         instance->maro_summary_ = nullptr;
@@ -1108,10 +906,7 @@ LRESULT maro_DiagnosticWindow::maro_HandleMessage(UINT message, WPARAM wparam, L
             return 1;
         break;
     case WM_DRAWITEM:
-        if (reinterpret_cast<DRAWITEMSTRUCT*>(lparam)->CtlID == maro_visualizationId)
-            maro_DrawVisualization(*reinterpret_cast<DRAWITEMSTRUCT*>(lparam));
-        else
-            maro_DrawButton(*reinterpret_cast<DRAWITEMSTRUCT*>(lparam));
+        maro_DrawButton(*reinterpret_cast<DRAWITEMSTRUCT*>(lparam));
         return TRUE;
     case WM_CREATE:
         return maro_CreateControls() ? 0 : -1;
@@ -1154,26 +949,19 @@ LRESULT maro_DiagnosticWindow::maro_HandleMessage(UINT message, WPARAM wparam, L
     return DefWindowProcW(maro_window_, message, wparam, lparam);
 }
 
-bool maro_DiagnosticWindow::maro_CreateOutputControls(HWND maro_parent, bool maro_expanded)
+bool maro_DiagnosticWindow::maro_CreateOutputControls(HWND maro_parent)
 {
     const auto maro_instance = ATL::_AtlBaseModule.GetModuleInstance();
-    for (const auto& maro_button : {std::pair{maro_expandId, maro_expanded ? L"복원" : L"확장"},
-        std::pair{maro_stopId, L"끄기"}})
-    {
-        const HWND maro_created = CreateWindowExW(0, L"BUTTON", maro_button.second, WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_OWNERDRAW,
-            0, 0, 1, 1, maro_parent, reinterpret_cast<HMENU>(static_cast<INT_PTR>(maro_button.first)), maro_instance, nullptr);
-        if (!maro_created) return false;
-        SetWindowSubclass(maro_created, maro_InputProc, 2, reinterpret_cast<DWORD_PTR>(this));
-    }
-    if (maro_outputMode_ || maro_expanded)
-    {
-        const HWND maro_input = CreateWindowExW(0, L"EDIT", L"", WS_CHILD | WS_VISIBLE | WS_TABSTOP | WS_BORDER | ES_AUTOHSCROLL,
-            0, 0, 1, 1, maro_parent, reinterpret_cast<HMENU>(static_cast<INT_PTR>(maro_inputId)), maro_instance, nullptr);
-        if (!maro_input) return false;
-        SendMessageW(maro_input, EM_SETLIMITTEXT, 4096, 0);
-        SendMessageW(maro_input, EM_SETCUEBANNER, TRUE, reinterpret_cast<LPARAM>(L"입력 후 Enter · 입력 종료 Ctrl+D"));
-        SetWindowSubclass(maro_input, maro_InputProc, 2, reinterpret_cast<DWORD_PTR>(this));
-    }
+    const HWND maro_stop = CreateWindowExW(0, L"BUTTON", L"끄기", WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_OWNERDRAW,
+        0, 0, 1, 1, maro_parent, reinterpret_cast<HMENU>(static_cast<INT_PTR>(maro_stopId)), maro_instance, nullptr);
+    if (!maro_stop) return false;
+    SetWindowSubclass(maro_stop, maro_InputProc, 2, reinterpret_cast<DWORD_PTR>(this));
+    const HWND maro_input = CreateWindowExW(0, L"EDIT", L"", WS_CHILD | WS_VISIBLE | WS_TABSTOP | WS_BORDER | ES_AUTOHSCROLL,
+        0, 0, 1, 1, maro_parent, reinterpret_cast<HMENU>(static_cast<INT_PTR>(maro_inputId)), maro_instance, nullptr);
+    if (!maro_input) return false;
+    SendMessageW(maro_input, EM_SETLIMITTEXT, 4096, 0);
+    SendMessageW(maro_input, EM_SETCUEBANNER, TRUE, reinterpret_cast<LPARAM>(L"입력 후 Enter · 입력 종료 Ctrl+D"));
+    SetWindowSubclass(maro_input, maro_InputProc, 2, reinterpret_cast<DWORD_PTR>(this));
     if (!CreateWindowExW(0, L"STATIC", L"", WS_CHILD | WS_VISIBLE | SS_LEFT | SS_ENDELLIPSIS,
         0, 0, 1, 1, maro_parent, reinterpret_cast<HMENU>(static_cast<INT_PTR>(maro_hintId)), maro_instance, nullptr)) return false;
     maro_UpdateSessionControls();
@@ -1187,264 +975,24 @@ void maro_DiagnosticWindow::maro_LayoutOutput(HWND maro_parent, int maro_bottom)
     const int maro_pad = MulDiv(8, static_cast<int>(GetDpiForWindow(maro_parent)), 96);
     const int maro_width = (std::max)(1L, maro_bounds.right - 2 * maro_pad);
     const int maro_unit = MulDiv(28, static_cast<int>(GetDpiForWindow(maro_parent)), 96);
-    const bool maro_expanded = maro_parent != maro_window_;
     const int maro_button = (std::max)(32, (std::min)(70, maro_width / 4));
-    const HWND maro_output = maro_parent == maro_window_ ? maro_summary_ : maro_expandedOutput_;
-    MoveWindow(GetDlgItem(maro_parent, maro_expandId), maro_bounds.right - maro_pad - 2 * maro_button,
-        maro_pad, maro_button - 4, maro_unit, TRUE);
     MoveWindow(GetDlgItem(maro_parent, maro_stopId), maro_bounds.right - maro_pad - maro_button,
         maro_pad, maro_button, maro_unit, TRUE);
     MoveWindow(GetDlgItem(maro_parent, 101), maro_pad, maro_pad,
-        (std::max)(1, maro_width - 2 * maro_button - 4), maro_unit, TRUE);
+        (std::max)(1, maro_width - maro_button - 4), maro_unit, TRUE);
     const int maro_hintY = maro_pad + maro_unit + 2;
     const int maro_hintHeight = MulDiv(20, static_cast<int>(GetDpiForWindow(maro_parent)), 96);
     MoveWindow(GetDlgItem(maro_parent, maro_hintId), maro_pad, maro_hintY, maro_width, maro_hintHeight, TRUE);
     const int maro_outputY = maro_hintY + maro_hintHeight + 4;
-    const int maro_available = (std::max)(1, maro_bottom - maro_outputY - maro_pad);
-    const int maro_visualHeight = maro_expanded ? (std::max)(160, maro_available * 70 / 100) : 0;
     const bool maro_inputVisible = maro_CanInput();
     const int maro_inputHeight = maro_inputVisible ? maro_unit + 4 : 0;
-    const int maro_inputY = (std::max)(maro_outputY + 1, maro_bottom - maro_visualHeight - maro_inputHeight - maro_pad);
-    MoveWindow(maro_output, maro_pad, maro_outputY, maro_width,
+    const int maro_inputY = (std::max)(maro_outputY + 1, maro_bottom - maro_inputHeight - maro_pad);
+    MoveWindow(maro_summary_, maro_pad, maro_outputY, maro_width,
         (std::max)(1, maro_inputY - maro_outputY - 4), TRUE);
-    MoveWindow(GetDlgItem(maro_parent, maro_inputId), maro_pad, maro_inputY,
-        maro_width, maro_unit, TRUE);
-    if (maro_expanded)
-        maro_LayoutVisualization(maro_inputY + maro_inputHeight + 4, maro_bottom - maro_pad, maro_width);
-    else if (maro_outputMode_)
-    {
-        ShowWindow(maro_output, maro_expandedWindow_ ? SW_HIDE : SW_SHOW);
-    }
-    ShowWindow(GetDlgItem(maro_parent, maro_inputId), maro_inputVisible && (maro_expanded || !maro_expandedWindow_) ? SW_SHOW : SW_HIDE);
-    const HFONT maro_font = maro_parent == maro_window_ ? maro_font_ : maro_expandedFont_;
-    for (int maro_id : {101, 102, maro_expandId, maro_inputId, maro_stopId, maro_sourceId,
-        maro_explanationId, maro_visualizationId, maro_visualLabelId, maro_timelineId, maro_hintId})
-        SendMessageW(GetDlgItem(maro_parent, maro_id), WM_SETFONT, reinterpret_cast<WPARAM>(maro_font), TRUE);
-}
-
-bool maro_DiagnosticWindow::maro_CreateVisualization(HWND maro_parent, bool maro_expanded)
-{
-    const auto maro_create = [maro_parent](const wchar_t* maro_type, const wchar_t* maro_caption, DWORD maro_style, int maro_id) {
-        return CreateWindowExW(0, maro_type, maro_caption, WS_CHILD | WS_VISIBLE | maro_style, 0, 0, 1, 1,
-            maro_parent, reinterpret_cast<HMENU>(static_cast<INT_PTR>(maro_id)), ATL::_AtlBaseModule.GetModuleInstance(), nullptr);
-    };
-    if (!maro_expanded) return true;
-    if (!maro_create(L"EDIT", L"", WS_TABSTOP | ES_READONLY | ES_MULTILINE | ES_AUTOVSCROLL | ES_AUTOHSCROLL, maro_sourceId) ||
-        !maro_create(L"EDIT", L"", WS_TABSTOP | ES_READONLY | ES_MULTILINE | ES_AUTOVSCROLL, maro_explanationId) ||
-        !maro_create(L"STATIC", L"", SS_OWNERDRAW, maro_visualizationId) ||
-        !maro_create(L"STATIC", L"정적 미리보기 · 실제 실행과 별개", SS_LEFT | SS_ENDELLIPSIS, maro_visualLabelId)) return false;
-    INITCOMMONCONTROLSEX maro_controls{sizeof(maro_controls), ICC_BAR_CLASSES};
-    InitCommonControlsEx(&maro_controls);
-    if (!maro_create(TRACKBAR_CLASSW, L"실행 기록", WS_TABSTOP | TBS_HORZ | TBS_NOTICKS, maro_timelineId)) return false;
-    SendDlgItemMessageW(maro_parent, maro_sourceId, EM_SETLIMITTEXT, 16384, 0);
-    SendDlgItemMessageW(maro_parent, maro_explanationId, EM_SETLIMITTEXT, 4096, 0);
-    SetWindowSubclass(GetDlgItem(maro_parent, maro_sourceId), maro_OutputScroll, 1, 0);
-    SetWindowSubclass(GetDlgItem(maro_parent, maro_explanationId), maro_OutputScroll, 1, 0);
-    for (const int maro_id : {maro_sourceId, maro_explanationId, maro_timelineId, maro_visualizationId})
-        SetWindowSubclass(GetDlgItem(maro_parent, maro_id), maro_InputProc, 2, reinterpret_cast<DWORD_PTR>(this));
-    return true;
-}
-
-void maro_DiagnosticWindow::maro_LayoutVisualization(int maro_top, int maro_bottom, int maro_width)
-{
-    const int maro_pad = 8;
-    const int maro_unit = MulDiv(28, static_cast<int>(GetDpiForWindow(maro_expandedWindow_)), 96);
-    const int maro_leftWidth = (std::max)(120, maro_width * 55 / 100 - maro_pad);
-    const int maro_rightX = maro_pad + maro_leftWidth + maro_pad;
-    const int maro_rightWidth = (std::max)(1, maro_width - maro_leftWidth - maro_pad);
-    const int maro_controlsHeight = maro_unit + 8;
-    const int maro_explanationHeight = (std::min)(64, (std::max)(32, (maro_bottom - maro_top) / 5));
-    const int maro_controlsTop = (std::max)(maro_top + maro_unit + 1, maro_bottom - maro_controlsHeight);
-    const int maro_explanationTop = (std::max)(maro_top + maro_unit + 1, maro_controlsTop - maro_explanationHeight - 4);
-    MoveWindow(GetDlgItem(maro_expandedWindow_, maro_visualLabelId), maro_pad, maro_top, maro_leftWidth, maro_unit, TRUE);
-    MoveWindow(GetDlgItem(maro_expandedWindow_, maro_sourceId), maro_pad, maro_top + maro_unit,
-        maro_leftWidth, (std::max)(1, maro_explanationTop - maro_top - maro_unit - 4), TRUE);
-    MoveWindow(GetDlgItem(maro_expandedWindow_, maro_explanationId), maro_pad, maro_explanationTop,
-        maro_leftWidth, maro_explanationHeight, TRUE);
-    MoveWindow(GetDlgItem(maro_expandedWindow_, maro_timelineId), maro_pad, maro_controlsTop,
-        maro_leftWidth, maro_unit, TRUE);
-    MoveWindow(GetDlgItem(maro_expandedWindow_, maro_visualizationId), maro_rightX, maro_top,
-        maro_rightWidth, (std::max)(1, maro_bottom - maro_top), TRUE);
-}
-
-void maro_DiagnosticWindow::maro_UpdateVisualization()
-{
-    const bool maro_hasSource = !maro_source_.maro_lines.empty();
-    if (maro_hasSource) maro_previewLine_ = (std::min)(maro_previewLine_, maro_source_.maro_lines.size() - 1);
-    std::wstring maro_explanation = L"소스 문서를 열면 컴파일 전에도 정적 미리보기를 볼 수 있습니다.";
-    std::wstring maro_preview;
-    if (maro_hasSource)
-    {
-        const auto& maro_line = maro_source_.maro_lines[maro_previewLine_];
-        maro_explanation = std::to_wstring(maro_line.maro_line) + L"행 · " + maro_line.maro_explanation;
-        const auto maro_start = maro_previewLine_ > 3 ? maro_previewLine_ - 3 : 0;
-        const auto maro_end = (std::min)(maro_source_.maro_lines.size(), maro_start + 9);
-        for (std::size_t maro_index = maro_start; maro_index < maro_end; ++maro_index)
-        {
-            const auto& maro_current = maro_source_.maro_lines[maro_index];
-            maro_preview += (maro_index == maro_previewLine_ ? L"▶ " : L"  ") + std::to_wstring(maro_current.maro_line) +
-                L"  " + maro_current.maro_text.substr(0, 1000) + (maro_current.maro_text.size() > 1000 ? L"…" : L"") + L"\r\n";
-        }
-        if (maro_source_.maro_truncated) maro_explanation += L" · 큰 소스는 일부만 표시";
-    }
-    if (!maro_expandedWindow_) return;
-    const auto& maro_trace = maro_VisibleTrace();
-    const bool maro_runtime = maro_trace.maro_line > 0 || !maro_trace.maro_message.empty();
-    std::wstring maro_caption = L"정적 미리보기 · Alt+←/→ 줄 이동 · F10 실제 실행";
-    if (maro_runtime)
-    {
-        maro_caption = maro_historyIndex_ + 1 < maro_history_.size() ? L"과거 관측값 · " :
-            maro_trace_.maro_waiting ? L"실제 추적 일시정지 · " : L"마지막 관측값 · ";
-        maro_caption += maro_trace.maro_function + L" · " + std::to_wstring(maro_trace.maro_line) + L"행";
-        if (!maro_history_.empty()) maro_caption += L" · 기록 " + std::to_wstring(maro_historyIndex_ + 1) + L"/" + std::to_wstring(maro_history_.size());
-        if (maro_trace.maro_line != maro_previewLine_ + 1)
-            maro_caption += L" / 정적 미리보기 " + std::to_wstring(maro_previewLine_ + 1) + L"행";
-        if (!maro_trace.maro_message.empty()) maro_explanation += L"\r\n" + maro_trace.maro_message.substr(0, 1000);
-        if (!maro_trace.maro_file.empty() && _wcsicmp(maro_trace.maro_file.c_str(), maro_source_.maro_path.c_str()) != 0)
-            maro_explanation += L"\r\n추적 위치: " + maro_trace.maro_file + L" (미리보기 문서와 다름)";
-    }
-    maro_SetTextChanged(GetDlgItem(maro_expandedWindow_, maro_sourceId), maro_preview);
-    if (maro_trace_.maro_line == 0 && !maro_trace_.maro_message.empty())
-        maro_explanation += L"\r\n" + maro_trace_.maro_message.substr(0, 1000);
-    if (!maro_notice_.empty()) maro_explanation += L"\r\n" + maro_notice_.substr(0, 1000);
-    maro_SetTextChanged(GetDlgItem(maro_expandedWindow_, maro_explanationId), maro_explanation);
-    maro_SetTextChanged(GetDlgItem(maro_expandedWindow_, maro_visualLabelId), maro_caption);
-    std::wstring maro_accessible;
-    for (const auto& maro_variable : maro_trace.maro_variables)
-    {
-        if (maro_accessible.size() > 16384) break;
-        maro_accessible += maro_variable.maro_name + L" (" + maro_variable.maro_type + L") = " +
-            (maro_variable.maro_available ? maro_variable.maro_value : L"알 수 없음") + L"\r\n";
-        for (const auto& maro_cell : maro_variable.maro_children)
-            maro_accessible += maro_cell.maro_name + L" = " + (maro_cell.maro_available ? maro_cell.maro_value : L"?") + L"\r\n";
-    }
-    maro_SetTextChanged(GetDlgItem(maro_expandedWindow_, maro_visualizationId), maro_accessible);
-    SendDlgItemMessageW(maro_expandedWindow_, maro_timelineId, TBM_SETRANGEMAX, TRUE,
-        static_cast<LPARAM>(maro_history_.empty() ? 0 : maro_history_.size() - 1));
-    SendDlgItemMessageW(maro_expandedWindow_, maro_timelineId, TBM_SETPOS, TRUE, static_cast<LPARAM>(maro_historyIndex_));
-    EnableWindow(GetDlgItem(maro_expandedWindow_, maro_timelineId), maro_history_.size() > 1);
-    InvalidateRect(GetDlgItem(maro_expandedWindow_, maro_visualizationId), nullptr, FALSE);
-}
-
-void maro_DiagnosticWindow::maro_DrawVisualization(const DRAWITEMSTRUCT& maro_item)
-{
-    const HDC maro_dc = maro_item.hDC;
-    FillRect(maro_dc, &maro_item.rcItem, maro_background_);
-    SetBkMode(maro_dc, TRANSPARENT);
-    const auto maro_oldFont = SelectObject(maro_dc, maro_expandedFont_ ? maro_expandedFont_ : maro_font_);
-    const int maro_width = maro_item.rcItem.right - maro_item.rcItem.left;
-    const int maro_height = maro_item.rcItem.bottom - maro_item.rcItem.top;
-    const int maro_unit = MulDiv(20, static_cast<int>(GetDpiForWindow(maro_item.hwndItem)), 96);
-    int maro_y = 4;
-    const auto maro_text = [&](std::wstring_view maro_value, COLORREF maro_color, int maro_lines = 1) {
-        RECT maro_rect{8, maro_y, maro_width - 8, (std::min)(maro_height, maro_y + maro_unit * maro_lines)};
-        SetTextColor(maro_dc, maro_color);
-        DrawTextW(maro_dc, maro_value.data(), static_cast<int>(maro_value.size()), &maro_rect,
-            DT_LEFT | DT_NOPREFIX | (maro_lines > 1 ? DT_WORDBREAK : DT_SINGLELINE | DT_END_ELLIPSIS));
-        maro_y += maro_unit * maro_lines;
-    };
-    const auto& maro_trace = maro_VisibleTrace();
-    const bool maro_runtime = maro_trace.maro_line > 0;
-    maro_text(maro_runtime ? L"실행 상태 · 변경값 강조 · 휠로 변수 이동" : L"선언 구조 · 아직 실행하지 않음", RGB(140, 200, 255));
-    const int maro_stackReserve = maro_trace.maro_frames.empty() ? maro_unit : (std::min)(maro_unit * 5, maro_height / 3);
-    const int maro_cardsBottom = maro_height - maro_stackReserve - maro_unit;
-    int maro_cards = 0;
-    const auto maro_previous = [&](const maro_TraceVariable& maro_variable) -> const maro_TraceVariable* {
-        if (maro_historyIndex_ == 0 || maro_historyIndex_ >= maro_history_.size()) return nullptr;
-        for (const auto& maro_value : maro_history_[maro_historyIndex_ - 1].maro_variables)
-            if (maro_value.maro_name == maro_variable.maro_name && maro_value.maro_address == maro_variable.maro_address) return &maro_value;
-        return nullptr;
-    };
-    const auto maro_box = [&](const RECT& maro_bounds, bool maro_changed) {
-        SetDCBrushColor(maro_dc, maro_changed ? RGB(55, 66, 47) : RGB(34, 40, 48));
-        FillRect(maro_dc, &maro_bounds, static_cast<HBRUSH>(GetStockObject(DC_BRUSH)));
-        SetDCBrushColor(maro_dc, maro_changed ? RGB(188, 203, 93) : RGB(87, 104, 124));
-        FrameRect(maro_dc, &maro_bounds, static_cast<HBRUSH>(GetStockObject(DC_BRUSH)));
-    };
-    const auto maro_card = [&](std::wstring maro_name, std::wstring maro_type, std::wstring maro_value, bool maro_available, bool maro_changed) {
-        const RECT maro_bounds{4, maro_y, maro_width - 4, maro_y + maro_unit * 2 + 2};
-        maro_box(maro_bounds, maro_changed);
-        maro_text(maro_name + L" (" + maro_type + L")", RGB(235, 235, 235));
-        maro_text(maro_available ? maro_value : L"값 알 수 없음", maro_available ? RGB(145, 225, 160) : RGB(185, 185, 185));
-        maro_y += 6;
-        ++maro_cards;
-    };
-    if (maro_runtime)
-    {
-        if (maro_visualOffset_ >= maro_trace.maro_variables.size()) maro_visualOffset_ = 0;
-        for (std::size_t maro_index = maro_visualOffset_; maro_index < maro_trace.maro_variables.size(); ++maro_index)
-        {
-            if (maro_y + maro_unit * 2 + 6 > maro_cardsBottom) break;
-            const auto& maro_variable = maro_trace.maro_variables[maro_index];
-            const auto* maro_old = maro_previous(maro_variable);
-            if (maro_variable.maro_children.empty())
-            {
-                maro_card(maro_variable.maro_name, maro_variable.maro_type, maro_variable.maro_value, maro_variable.maro_available,
-                    maro_old && (maro_old->maro_value != maro_variable.maro_value || maro_old->maro_available != maro_variable.maro_available));
-                continue;
-            }
-            maro_text(maro_variable.maro_name + L" (" + maro_variable.maro_type + L")", RGB(235, 235, 235));
-            const std::size_t maro_columns = (std::max)(std::size_t{1}, maro_variable.maro_dimensions.size() == 2 ?
-                maro_variable.maro_dimensions.back() : (std::min)(std::size_t{6}, maro_variable.maro_children.size()));
-            const auto maro_visibleColumns = (std::min)(maro_columns, static_cast<std::size_t>((std::max)(1, (maro_width - 16) / 66)));
-            const int maro_cellWidth = (std::max)(1, (maro_width - 16) / static_cast<int>((std::max)(std::size_t{1}, maro_visibleColumns)));
-            const std::size_t maro_rows = (maro_variable.maro_children.size() + maro_columns - 1) / maro_columns;
-            std::size_t maro_shown = 0;
-            for (std::size_t maro_row = 0; maro_row < maro_rows && maro_y + maro_unit * 2 + 4 <= maro_cardsBottom; ++maro_row)
-            {
-                for (std::size_t maro_column = 0; maro_column < maro_visibleColumns; ++maro_column)
-                {
-                    const auto maro_cell = maro_row * maro_columns + maro_column;
-                    if (maro_cell >= maro_variable.maro_children.size()) break;
-                    const auto& maro_value = maro_variable.maro_children[maro_cell];
-                    const bool maro_changed = maro_old && maro_cell < maro_old->maro_children.size() &&
-                        (maro_old->maro_children[maro_cell].maro_value != maro_value.maro_value ||
-                            maro_old->maro_children[maro_cell].maro_available != maro_value.maro_available);
-                    const int maro_left = 8 + static_cast<int>(maro_column) * maro_cellWidth;
-                    RECT maro_bounds{maro_left, maro_y, maro_left + maro_cellWidth - 4, maro_y + maro_unit * 2};
-                    maro_box(maro_bounds, maro_changed);
-                    RECT maro_label{maro_bounds.left + 3, maro_y, maro_bounds.right - 3, maro_y + maro_unit};
-                    SetTextColor(maro_dc, RGB(150, 175, 190));
-                    DrawTextW(maro_dc, maro_value.maro_name.c_str(), -1, &maro_label, DT_LEFT | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX);
-                    maro_label.top += maro_unit;
-                    maro_label.bottom += maro_unit;
-                    SetTextColor(maro_dc, maro_value.maro_available ? RGB(145, 225, 160) : RGB(185, 185, 185));
-                    DrawTextW(maro_dc, maro_value.maro_available ? maro_value.maro_value.c_str() : L"?", -1, &maro_label,
-                        DT_CENTER | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX);
-                    ++maro_shown;
-                }
-                maro_y += maro_unit * 2 + 4;
-            }
-            if (maro_variable.maro_truncated || maro_shown < maro_variable.maro_children.size())
-                maro_text(L"일부 셀 표시 · 관측 최대 64개", RGB(185, 185, 185));
-            maro_y += 6;
-            ++maro_cards;
-        }
-    }
-    else
-    {
-        for (const auto& maro_variable : maro_source_.maro_items)
-        {
-            if (maro_y + maro_unit * 2 + 6 > maro_cardsBottom) break;
-            if (maro_variable.maro_kind != maro_SourceItemKind::maro_Variable) continue;
-            if (maro_variable.maro_line > maro_previewLine_ + 1) continue;
-            maro_card((maro_variable.maro_line == maro_previewLine_ + 1 ? L"▶ " : L"") + maro_variable.maro_name,
-                maro_variable.maro_detail, L"", false, false);
-        }
-    }
-    if (maro_cards == 0) maro_text(maro_runtime ? L"이 위치에서 확인할 수 있는 지역 변수가 없습니다." : L"실제 추적을 시작하면 관측된 값을 표시합니다.", RGB(180, 180, 180), 2);
-    if (maro_y + maro_unit < maro_height)
-    {
-        maro_text(L"호출 스택", RGB(140, 200, 255));
-        if (maro_trace.maro_frames.empty()) maro_text(L"실행 전 · 알 수 없음", RGB(180, 180, 180));
-        int maro_count = 0;
-        for (const auto& maro_frame : maro_trace.maro_frames)
-        {
-            if (maro_y + maro_unit > maro_height || maro_count++ == 5) break;
-            maro_text(L"↳ " + maro_frame.maro_function + L" · " + std::to_wstring(maro_frame.maro_line) + L"행", RGB(220, 220, 220));
-        }
-    }
-    SelectObject(maro_dc, maro_oldFont);
+    MoveWindow(GetDlgItem(maro_parent, maro_inputId), maro_pad, maro_inputY, maro_width, maro_unit, TRUE);
+    ShowWindow(GetDlgItem(maro_parent, maro_inputId), maro_inputVisible ? SW_SHOW : SW_HIDE);
+    for (int maro_id : {101, 102, maro_inputId, maro_stopId, maro_hintId})
+        SendMessageW(GetDlgItem(maro_parent, maro_id), WM_SETFONT, reinterpret_cast<WPARAM>(maro_font_), TRUE);
 }
 
 void maro_DiagnosticWindow::maro_DrawButton(const DRAWITEMSTRUCT& maro_item)
@@ -1459,139 +1007,4 @@ void maro_DiagnosticWindow::maro_DrawButton(const DRAWITEMSTRUCT& maro_item)
     RECT maro_rect = maro_item.rcItem;
     DrawTextW(maro_item.hDC, maro_text, -1, &maro_rect, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
     if ((maro_item.itemState & ODS_FOCUS) != 0) DrawFocusRect(maro_item.hDC, &maro_rect);
-}
-
-void maro_DiagnosticWindow::maro_ExpandOutput()
-{
-    if (maro_expandedWindow_ || !maro_window_) return;
-    WNDCLASSEXW maro_type{sizeof(maro_type)};
-    maro_type.lpfnWndProc = maro_ExpandedProc;
-    maro_type.hInstance = ATL::_AtlBaseModule.GetModuleInstance();
-    maro_type.hCursor = LoadCursorW(nullptr, IDC_ARROW);
-    maro_type.lpszClassName = L"maro_CLive_Output";
-    if (!RegisterClassExW(&maro_type) && GetLastError() != ERROR_CLASS_ALREADY_EXISTS) return;
-    MONITORINFO maro_monitor{sizeof(maro_monitor)};
-    GetMonitorInfoW(MonitorFromWindow(maro_window_, MONITOR_DEFAULTTONEAREST), &maro_monitor);
-    const RECT maro_area = maro_monitor.rcWork;
-    const HWND maro_created = CreateWindowExW(WS_EX_CONTROLPARENT | WS_EX_APPWINDOW, maro_type.lpszClassName,
-        L"CLive_Maro 실시간 출력", WS_OVERLAPPEDWINDOW | WS_CLIPCHILDREN,
-        maro_area.left + 20, maro_area.top + 20, (std::max)(640L, maro_area.right - maro_area.left - 40),
-        (std::max)(400L, maro_area.bottom - maro_area.top - 40), GetAncestor(maro_window_, GA_ROOT),
-        nullptr, maro_type.hInstance, this);
-    if (!maro_created) return;
-    SetWindowTextW(GetDlgItem(maro_created, maro_inputId), maro_ReadInput(maro_window_).c_str());
-    ShowWindow(maro_summary_, SW_HIDE);
-    for (int maro_id : {maro_inputId, maro_stopId})
-        ShowWindow(GetDlgItem(maro_window_, maro_id), SW_HIDE);
-    SetWindowTextW(GetDlgItem(maro_window_, maro_expandId), L"복원");
-    ShowWindow(maro_created, SW_SHOW);
-    SetForegroundWindow(maro_created);
-    SetFocus(GetDlgItem(maro_created, maro_sourceId));
-    if (!maro_projectMode_ && maro_history_.empty() && maro_trace_.maro_line == 0 &&
-        !maro_source_.maro_lines.empty() && maro_startTrace_) maro_startTrace_();
-}
-
-void maro_DiagnosticWindow::maro_CloseExpanded()
-{
-    if (maro_expandedWindow_) DestroyWindow(maro_expandedWindow_);
-}
-
-LRESULT CALLBACK maro_DiagnosticWindow::maro_ExpandedProc(HWND maro_window, UINT maro_message,
-    WPARAM maro_wparam, LPARAM maro_lparam) noexcept
-{
-    auto* maro_self = reinterpret_cast<maro_DiagnosticWindow*>(GetWindowLongPtrW(maro_window, GWLP_USERDATA));
-    if (maro_message == WM_NCCREATE)
-    {
-        maro_self = static_cast<maro_DiagnosticWindow*>(reinterpret_cast<CREATESTRUCTW*>(maro_lparam)->lpCreateParams);
-        maro_self->AddRef();
-        maro_self->maro_expandedWindow_ = maro_window;
-        SetWindowLongPtrW(maro_window, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(maro_self));
-    }
-    if (!maro_self) return DefWindowProcW(maro_window, maro_message, maro_wparam, maro_lparam);
-    if (maro_message == WM_NCDESTROY)
-    {
-        maro_self->maro_expandedWindow_ = nullptr;
-        maro_self->maro_expandedOutput_ = nullptr;
-        if (maro_self->maro_expandedFont_) DeleteObject(maro_self->maro_expandedFont_);
-        maro_self->maro_expandedFont_ = nullptr;
-        if (!maro_self->maro_closing_ && maro_self->maro_window_)
-        {
-            SetWindowTextW(maro_self->maro_summary_, maro_self->maro_output_.c_str());
-            ShowWindow(maro_self->maro_summary_, SW_SHOW);
-            for (int maro_id : {maro_inputId, maro_stopId})
-                ShowWindow(GetDlgItem(maro_self->maro_window_, maro_id), SW_SHOW);
-            SetWindowTextW(GetDlgItem(maro_self->maro_window_, maro_expandId), L"확장");
-            maro_self->maro_Layout();
-        }
-        SetWindowLongPtrW(maro_window, GWLP_USERDATA, 0);
-        maro_self->Release();
-        return DefWindowProcW(maro_window, maro_message, maro_wparam, maro_lparam);
-    }
-    try { return maro_self->maro_HandleExpandedMessage(maro_message, maro_wparam, maro_lparam); }
-    catch (...) { return maro_message == WM_CREATE ? -1 : DefWindowProcW(maro_window, maro_message, maro_wparam, maro_lparam); }
-}
-
-LRESULT maro_DiagnosticWindow::maro_HandleExpandedMessage(UINT maro_message, WPARAM maro_wparam, LPARAM maro_lparam)
-{
-    switch (maro_message)
-    {
-    case WM_CREATE:
-        maro_expandedOutput_ = CreateWindowExW(0, L"EDIT", maro_output_.c_str(), WS_CHILD | WS_VISIBLE |
-            WS_TABSTOP | ES_MULTILINE | ES_READONLY | ES_AUTOVSCROLL | ES_AUTOHSCROLL, 0, 0, 1, 1,
-            maro_expandedWindow_, reinterpret_cast<HMENU>(102), ATL::_AtlBaseModule.GetModuleInstance(), nullptr);
-        if (!maro_expandedOutput_ || !maro_CreateOutputControls(maro_expandedWindow_, true) ||
-            !maro_CreateVisualization(maro_expandedWindow_, true)) return -1;
-        SendMessageW(maro_expandedOutput_, EM_SETLIMITTEXT, maro_outputLimit, 0);
-        SetWindowSubclass(maro_expandedOutput_, maro_OutputScroll, 1, 0);
-        SetWindowSubclass(maro_expandedOutput_, maro_InputProc, 2, reinterpret_cast<DWORD_PTR>(this));
-        maro_expandedFont_ = CreateFontW(-MulDiv(11, static_cast<int>(GetDpiForWindow(maro_expandedWindow_)), 72),
-            0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
-            CLEARTYPE_QUALITY, DEFAULT_PITCH, L"Malgun Gothic");
-        maro_UpdateVisualization();
-        maro_UpdateSessionControls();
-        return 0;
-    case WM_SIZE:
-        maro_LayoutOutput(maro_expandedWindow_, HIWORD(maro_lparam));
-        return 0;
-    case WM_KEYDOWN:
-    case WM_SYSKEYDOWN:
-        if (maro_HandleKey(maro_expandedWindow_, maro_wparam)) return 0;
-        break;
-    case WM_HSCROLL:
-        if (reinterpret_cast<HWND>(maro_lparam) == GetDlgItem(maro_expandedWindow_, maro_timelineId))
-        {
-            maro_SelectHistory(static_cast<std::size_t>(SendDlgItemMessageW(maro_expandedWindow_, maro_timelineId, TBM_GETPOS, 0, 0)));
-            return 0;
-        }
-        break;
-    case WM_GETMINMAXINFO:
-        reinterpret_cast<MINMAXINFO*>(maro_lparam)->ptMinTrackSize = {660, 520};
-        return 0;
-    case WM_COMMAND:
-        if (maro_HandleCommand(maro_expandedWindow_, maro_wparam)) return 0;
-        break;
-    case WM_CLOSE:
-        maro_CloseExpanded();
-        return 0;
-    case WM_DRAWITEM:
-        if (reinterpret_cast<DRAWITEMSTRUCT*>(maro_lparam)->CtlID == maro_visualizationId)
-            maro_DrawVisualization(*reinterpret_cast<DRAWITEMSTRUCT*>(maro_lparam));
-        else
-            maro_DrawButton(*reinterpret_cast<DRAWITEMSTRUCT*>(maro_lparam));
-        return TRUE;
-    case WM_CTLCOLORSTATIC:
-    case WM_CTLCOLOREDIT:
-    case WM_CTLCOLORLISTBOX:
-        SetTextColor(reinterpret_cast<HDC>(maro_wparam), RGB(224, 224, 224));
-        SetBkColor(reinterpret_cast<HDC>(maro_wparam), RGB(24, 24, 24));
-        return reinterpret_cast<LRESULT>(maro_background_);
-    case WM_ERASEBKGND:
-        {
-            RECT maro_bounds{};
-            GetClientRect(maro_expandedWindow_, &maro_bounds);
-            FillRect(reinterpret_cast<HDC>(maro_wparam), &maro_bounds, maro_background_);
-        }
-        return 1;
-    }
-    return DefWindowProcW(maro_expandedWindow_, maro_message, maro_wparam, maro_lparam);
 }

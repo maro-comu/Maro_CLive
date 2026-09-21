@@ -86,7 +86,7 @@ struct maro_Context
         Maro_Diagnostic maro_diagnostic;
         maro_diagnostic.code = maro_code;
         maro_diagnostic.analyzer = L"CLive_Maro source checks";
-        maro_diagnostic.analyzerVersion = L"2.3.4";
+        maro_diagnostic.analyzerVersion = L"2.3.5";
         maro_diagnostic.sourceVersion = maro_request.sourceVersion;
         maro_diagnostic.sourcePath = maro_request.sourcePath;
         maro_diagnostic.range.start = maro_position(maro_start);
@@ -317,21 +317,36 @@ void maro_directives(maro_Context& maro_context, const std::vector<maro_Token>& 
     }
     if (maro_context.maro_uncertain) return;
     std::map<std::wstring_view, std::vector<maro_MacroUse>> maro_valueUses;
-    for (std::size_t maro_index = 1; maro_index + 1 < maro_context.maro_tokens.size(); ++maro_index)
+    std::set<std::wstring_view> maro_otherUses;
+    const auto maro_builtin = [](std::wstring_view maro_type) {
+        return maro_type == L"int" || maro_type == L"char" || maro_type == L"short" || maro_type == L"long" ||
+            maro_type == L"float" || maro_type == L"double" || maro_type == L"signed" || maro_type == L"unsigned";
+    };
+    for (std::size_t maro_index = 0; maro_index < maro_context.maro_tokens.size(); ++maro_index)
     {
         const auto& maro_token = maro_context.maro_tokens[maro_index];
-        if (!maro_context.maro_has(maro_index - 1, L"[") || !maro_context.maro_has(maro_index + 1, L"]") || !maro_context.maro_macros.contains(maro_token.maro_text)) continue;
+        if (!maro_context.maro_macros.contains(maro_token.maro_text)) continue;
+        const bool maro_arrayUse = maro_index && maro_context.maro_has(maro_index - 1, L"[") && maro_context.maro_has(maro_index + 1, L"]");
+        const bool maro_scalarUse = maro_index >= 3 && maro_context.maro_has(maro_index - 1, L"=") &&
+            maro_context.maro_has(maro_index + 1, L";") && maro_builtin(maro_context.maro_tokens[maro_index - 3].maro_text) &&
+            maro_context.maro_plain(maro_context.maro_tokens[maro_index - 3].maro_text) &&
+            maro_identifier(maro_context.maro_tokens[maro_index - 2].maro_text) &&
+            maro_context.maro_plain(maro_context.maro_tokens[maro_index - 2].maro_text) &&
+            (maro_index == 3 || maro_context.maro_has(maro_index - 4, L";") ||
+                maro_context.maro_has(maro_index - 4, L"{") || maro_context.maro_has(maro_index - 4, L"}"));
+        if (!maro_arrayUse && !maro_scalarUse)
+        {
+            maro_otherUses.insert(maro_token.maro_text);
+            continue;
+        }
         maro_MacroUse maro_use;
         maro_use.maro_range = {maro_context.maro_position(maro_token.maro_start), maro_context.maro_position(maro_token.maro_end), false};
-        if (maro_index >= 3 && (maro_index == 3 || maro_context.maro_has(maro_index - 4, L";") ||
+        if (maro_arrayUse && maro_index >= 3 && (maro_index == 3 || maro_context.maro_has(maro_index - 4, L";") ||
             maro_context.maro_has(maro_index - 4, L"{") || maro_context.maro_has(maro_index - 4, L"}")))
         {
             const auto& maro_type = maro_context.maro_tokens[maro_index - 3];
             const auto& maro_name = maro_context.maro_tokens[maro_index - 2];
-            const bool maro_builtin = maro_type.maro_text == L"int" || maro_type.maro_text == L"char" || maro_type.maro_text == L"short" ||
-                maro_type.maro_text == L"long" || maro_type.maro_text == L"float" || maro_type.maro_text == L"double" ||
-                maro_type.maro_text == L"signed" || maro_type.maro_text == L"unsigned";
-            maro_use.maro_builtinDeclaration = maro_builtin && maro_context.maro_plain(maro_type.maro_text) &&
+            maro_use.maro_builtinDeclaration = maro_builtin(maro_type.maro_text) && maro_context.maro_plain(maro_type.maro_text) &&
                 maro_identifier(maro_name.maro_text) && maro_context.maro_plain(maro_name.maro_text) &&
                 (maro_context.maro_has(maro_index + 2, L";") || maro_context.maro_has(maro_index + 2, L"="));
             maro_use.maro_nameRange = {maro_context.maro_position(maro_name.maro_start), maro_context.maro_position(maro_name.maro_end), false};
@@ -353,6 +368,15 @@ void maro_directives(maro_Context& maro_context, const std::vector<maro_Token>& 
     }
     for (std::size_t maro_index = 0; maro_index < maro_all.size(); ++maro_index)
     {
+        if (maro_all[maro_index].maro_text != L"#") continue;
+        auto maro_end = maro_index + 1;
+        while (maro_end < maro_all.size() && maro_all[maro_end].maro_line == maro_all[maro_index].maro_line) ++maro_end;
+        for (auto maro_body = maro_index + 3; maro_body < maro_end; ++maro_body)
+            if (maro_context.maro_macros.contains(maro_all[maro_body].maro_text)) maro_otherUses.insert(maro_all[maro_body].maro_text);
+        maro_index = maro_end - 1;
+    }
+    for (std::size_t maro_index = 0; maro_index < maro_all.size(); ++maro_index)
+    {
         if (maro_context.maro_diagnostics.size() - maro_context.maro_initialCount >= 128) break;
         if (maro_all[maro_index].maro_text != L"#") continue;
         auto maro_end = maro_index + 1;
@@ -364,12 +388,16 @@ void maro_directives(maro_Context& maro_context, const std::vector<maro_Token>& 
         if (maro_count == 6 && maro_is(3, L"=") && maro_integer(maro_all[maro_index + 4].maro_text) != maro_none && maro_is(5, L";") &&
             maro_valueUses.contains(maro_name.maro_text))
         {
-            maro_context.maro_macroIssues.emplace(maro_context.maro_diagnostics.size(), maro_valueUses[maro_name.maro_text]);
+            auto maro_uses = maro_valueUses[maro_name.maro_text];
+            std::erase_if(maro_uses, [&](const maro_MacroUse& maro_use) { return maro_use.maro_range.start.line <= maro_name.maro_line; });
+            if (maro_uses.empty()) { maro_index = maro_end - 1; continue; }
+            maro_context.maro_macroIssues.emplace(maro_context.maro_diagnostics.size(), std::move(maro_uses));
             auto& maro_diagnostic = maro_context.maro_add(L"MARO-MACRO-VALUE", maro_all[maro_index + 3].maro_start, maro_all[maro_index + 5].maro_end,
-                L"'" + std::wstring(maro_name.maro_text) + L"'를 대괄호 안에서 값으로 사용했지만, 매크로에 '='와 ';'가 포함되어 문법 오류가 납니다. '#define " +
-                std::wstring(maro_name.maro_text) + L" " + std::wstring(maro_all[maro_index + 4].maro_text) + L"'로 바꿔 상수 값만 남기세요.", Maro_Severity::Error);
-            maro_context.maro_fix(maro_diagnostic, maro_all[maro_index + 3].maro_start, maro_all[maro_index + 5].maro_end,
-                std::wstring(maro_all[maro_index + 4].maro_text), L"매크로를 '#define " + std::wstring(maro_name.maro_text) + L" " + std::wstring(maro_all[maro_index + 4].maro_text) + L"'로 수정합니다.");
+                L"매크로 값에서 '='와 ';'를 제거합니다.", Maro_Severity::Error);
+            if (!maro_otherUses.contains(maro_name.maro_text))
+                maro_context.maro_fix(maro_diagnostic, maro_all[maro_index + 3].maro_start, maro_all[maro_index + 5].maro_end,
+                    std::wstring(maro_all[maro_index + 4].maro_text), L"매크로 값에서 '='와 ';'를 제거합니다.");
+            else maro_diagnostic.friendlyMessage = L"값으로 쓸 매크로에는 '='·';'가 필요 없습니다. 다른 사용처도 확인한 뒤 정의를 바꾸세요.";
         }
         else if (maro_count == 9 && maro_is(3, L"(") && maro_is(5, L")") && maro_is(7, L"*") &&
             maro_name.maro_end == maro_all[maro_index + 3].maro_start && maro_identifier(maro_all[maro_index + 4].maro_text) &&
@@ -378,10 +406,9 @@ void maro_directives(maro_Context& maro_context, const std::vector<maro_Token>& 
             const auto maro_parameter = std::wstring(maro_all[maro_index + 4].maro_text);
             const auto maro_replacement = L"((" + maro_parameter + L") * (" + maro_parameter + L"))";
             auto& maro_diagnostic = maro_context.maro_add(L"MARO-MACRO-PRECEDENCE", maro_all[maro_index + 6].maro_start, maro_all[maro_index + 8].maro_end,
-                L"괄호가 없어 인수와 주변 식의 계산 순서가 달라질 수 있습니다. 본문을 '" + maro_replacement +
-                L"'로 바꿔 각 인수와 전체 곱셈식을 괄호로 감싸세요. 인수는 여전히 두 번 계산되므로 ++나 부작용이 있는 함수 호출을 넣지 마세요.");
+                L"매크로 인수와 곱셈식에 괄호를 추가합니다. 인수는 두 번 계산되므로 ++·함수 호출은 피하세요.");
             maro_context.maro_fix(maro_diagnostic, maro_all[maro_index + 6].maro_start, maro_all[maro_index + 8].maro_end,
-                maro_replacement, L"매크로 본문을 '" + maro_replacement + L"'로 수정합니다.");
+                maro_replacement, L"인수·곱셈식에 괄호를 추가합니다(인수의 중복 계산은 유지).");
         }
         maro_index = maro_end - 1;
     }
@@ -571,13 +598,13 @@ void maro_codeChecks(maro_Context& maro_context)
                 maro_context.maro_relatedRanges.emplace(maro_context.maro_diagnostics.size(), Maro_SourceRange{
                     maro_context.maro_position(maro_token.maro_start), maro_context.maro_position(maro_tokens[maro_index + 1].maro_end), false});
                 maro_context.maro_add(L"MARO-LOCAL-LIFETIME", maro_tokens[maro_index + 1].maro_start, maro_tokens[maro_index + 1].maro_end,
-                    L"지역 배열은 함수가 끝나면 사라집니다. 호출자가 배열을 만들고 함수에 전달하도록 바꾸세요. static이나 동적 할당으로 임의 변환하면 수명·공유 방식이 달라져 자동 수정하지 않습니다.");
+                    L"반환한 지역 배열은 곧 사라집니다. 호출자가 만든 배열을 함수에 전달하도록 바꾸세요.");
             }
             if (maro_context.maro_has(maro_index + 1, L"0") && maro_context.maro_has(maro_index + 2, L"}") &&
                 maro_context.maro_scopes[maro_token.maro_scope].maro_function && maro_context.maro_plain(L"return"))
             {
                 auto& maro_diagnostic = maro_context.maro_add(L"MARO-MISSING-SEMICOLON", maro_tokens[maro_index + 1].maro_end, maro_tokens[maro_index + 1].maro_end,
-                    L"return 0 뒤에 ';'를 붙여 문장을 끝내세요.", Maro_Severity::Error);
+                    L"return 0 끝에 ';'를 추가합니다.", Maro_Severity::Error);
                 maro_context.maro_fix(maro_diagnostic, maro_token.maro_start, maro_tokens[maro_index + 1].maro_end,
                     maro_context.maro_request.sourceText.substr(maro_token.maro_start, maro_tokens[maro_index + 1].maro_end - maro_token.maro_start) + L";",
                     L"return 0 끝에 ';'를 추가합니다.");
@@ -590,9 +617,9 @@ void maro_codeChecks(maro_Context& maro_context)
             if (maro_declaration && !maro_declaration->maro_pointer && !maro_declaration->maro_array && maro_declaration->maro_type == L"int")
             {
                 auto& maro_diagnostic = maro_context.maro_add(L"MARO-CONDITION-ASSIGNMENT", maro_tokens[maro_index + 3].maro_start, maro_tokens[maro_index + 3].maro_end,
-                    L"'='는 0을 대입하여 이 조건을 항상 거짓으로 만듭니다. 대입이 목적이면 그대로 두고, 0인지 비교하려는 의도라면 '=='로 바꾸세요.", Maro_Severity::Warning, Maro_Evidence::Conditional);
+                    L"0과 비교하려는 경우: '='를 '=='로 바꿉니다.", Maro_Severity::Warning, Maro_Evidence::Conditional);
                 maro_context.maro_fix(maro_diagnostic, maro_tokens[maro_index + 3].maro_start, maro_tokens[maro_index + 3].maro_end,
-                    L"==", L"0과 비교하려는 경우: '='를 '=='로 수정합니다.");
+                    L"==", L"0과 비교하려는 경우: '='를 '=='로 바꿉니다.");
             }
         }
         const auto maro_comparisonBoundary = [&](std::size_t maro_at, bool maro_before) {
@@ -609,13 +636,13 @@ void maro_codeChecks(maro_Context& maro_context)
             if (maro_declaration && maro_declaration->maro_type == L"char" && !maro_declaration->maro_literal.empty() && maro_unchanged(maro_context, *maro_declaration, maro_index))
             {
                 auto& maro_diagnostic = maro_context.maro_add(L"MARO-STRING-COMPARE", maro_tokens[maro_index + 1].maro_start, maro_tokens[maro_index + 2].maro_end,
-                    L"'=='는 문자열 내용이 아닌 주소를 비교합니다. 내용이 같은지 확인하려면 strcmp(" + std::wstring(maro_token.maro_text) + L", " + std::wstring(maro_tokens[maro_index + 2].maro_text) + L") == 0으로 바꾸세요.", Maro_Severity::Warning, Maro_Evidence::Conditional);
+                    L"문자열 내용을 비교하려는 경우: strcmp(...) == 0으로 바꿉니다.", Maro_Severity::Warning, Maro_Evidence::Conditional);
                 if (maro_context.maro_stringHeader && maro_context.maro_libraryFunction(L"strcmp") &&
                     (maro_index == 0 || (!maro_context.maro_has(maro_index - 1, L"!") && !maro_context.maro_has(maro_index - 1, L"*") && !maro_context.maro_has(maro_index - 1, L"&") && !maro_context.maro_has(maro_index - 1, L"."))))
                     maro_context.maro_fix(maro_diagnostic, maro_token.maro_start, maro_tokens[maro_index + 2].maro_end,
                         L"(strcmp(" + std::wstring(maro_token.maro_text) + L", " + std::wstring(maro_tokens[maro_index + 2].maro_text) + L") == 0)",
-                        L"내용을 비교하려는 경우: 'strcmp(...) == 0'으로 수정합니다.");
-                else maro_diagnostic.friendlyMessage += L" <string.h>와 함수 선언을 확인한 뒤 직접 수정하세요.";
+                        L"문자열 내용을 비교하려는 경우: strcmp(...) == 0으로 바꿉니다.");
+                else maro_diagnostic.friendlyMessage = L"내용 비교에는 strcmp(...) == 0을 쓰세요. <string.h>와 strcmp 선언을 먼저 확인하세요.";
             }
         }
         if (maro_identifier(maro_token.maro_text) && maro_context.maro_has(maro_index + 1, L"=") && maro_context.maro_has(maro_index + 3, L";") &&
@@ -626,18 +653,18 @@ void maro_codeChecks(maro_Context& maro_context)
             if (maro_target && maro_target->maro_array && maro_target->maro_type == L"char" && maro_source && maro_source->maro_type == L"char" && !maro_source->maro_literal.empty())
             {
                 auto& maro_diagnostic = maro_context.maro_add(L"MARO-ARRAY-ASSIGNMENT", maro_token.maro_start, maro_tokens[maro_index + 2].maro_end,
-                    L"배열에는 '='로 문자열을 대입할 수 없습니다. 널 문자까지 들어갈 크기를 확인한 뒤 문자열 내용을 배열에 복사하세요.", Maro_Severity::Error);
+                    L"배열에는 '=' 대신 문자열 복사가 필요합니다. 복사할 길이와 <string.h>를 확인하세요.", Maro_Severity::Error);
                 if (!maro_target->maro_const && maro_context.maro_stringHeader && maro_context.maro_libraryFunction(L"memcpy") &&
                     maro_source->maro_literal.size() - 1 <= maro_target->maro_arraySize && maro_unchanged(maro_context, *maro_source, maro_index))
                 {
                     const auto maro_count = maro_source->maro_literal.size() - 1;
-                    maro_diagnostic.friendlyMessage = L"배열에는 '=' 대신 복사가 필요합니다. 확인된 문자열과 널 문자를 합한 " + std::to_wstring(maro_count) + L"바이트를 memcpy(" + std::wstring(maro_token.maro_text) + L", " + std::wstring(maro_tokens[maro_index + 2].maro_text) + L", " + std::to_wstring(maro_count) + L")로 복사하세요.";
+                    maro_diagnostic.friendlyMessage = L"문자열과 끝의 널 문자(" + std::to_wstring(maro_count) + L"바이트)를 memcpy로 복사합니다.";
                     maro_context.maro_fix(maro_diagnostic, maro_token.maro_start, maro_tokens[maro_index + 2].maro_end,
                         L"memcpy(" + std::wstring(maro_token.maro_text) + L", " + std::wstring(maro_tokens[maro_index + 2].maro_text) + L", " + std::to_wstring(maro_count) + L")",
-                        L"널 문자를 포함한 " + std::to_wstring(maro_count) + L"바이트를 memcpy로 복사하도록 수정합니다.");
+                        maro_diagnostic.friendlyMessage);
                 }
-                else if (maro_target->maro_const) maro_diagnostic.friendlyMessage += L" 대상이 const 배열이므로 나중에 쓸 수 없습니다. 선언할 때 초기화하거나 변경 가능한 별도 배열을 사용하세요.";
-                else if (maro_source->maro_literal.size() - 1 > maro_target->maro_arraySize) maro_diagnostic.friendlyMessage += L" 현재 배열 크기가 문자열과 널 문자를 담기에 부족합니다. 배열 크기부터 늘리세요.";
+                else if (maro_target->maro_const) maro_diagnostic.friendlyMessage = L"const 배열은 바꿀 수 없습니다. 선언할 때 초기화하거나 변경 가능한 배열을 사용하세요.";
+                else if (maro_source->maro_literal.size() - 1 > maro_target->maro_arraySize) maro_diagnostic.friendlyMessage = L"복사할 공간이 부족합니다. 문자열과 널 문자가 들어가도록 배열 크기를 늘리세요.";
             }
         }
         if (maro_token.maro_text == L"printf" && maro_context.maro_standalone(maro_index) && maro_context.maro_stdioHeader && maro_context.maro_libraryFunction(L"printf") &&
@@ -653,12 +680,12 @@ void maro_codeChecks(maro_Context& maro_context)
                 maro_context.maro_relatedRanges.emplace(maro_context.maro_diagnostics.size(), Maro_SourceRange{
                     maro_context.maro_position(maro_token.maro_start), maro_context.maro_position(maro_tokens[maro_index + 5].maro_end), false});
                 auto& maro_diagnostic = maro_context.maro_add(L"MARO-PRINTF-POINTER", maro_tokens[maro_index + 4].maro_start, maro_tokens[maro_index + 4].maro_end,
-                    L"%d는 정수용인데 포인터를 넘겼습니다. 주소를 출력하려면 %p와 (void*) 변환을 함께 사용하세요. 가리키는 값 출력은 포인터의 형식과 수명을 먼저 확인해야 합니다.", Maro_Severity::Warning, Maro_Evidence::Conditional);
+                    L"주소를 출력하려는 경우: %d를 %p로 바꾸고 포인터를 (void*)로 변환합니다.", Maro_Severity::Warning, Maro_Evidence::Conditional);
                 auto maro_newFormat = std::wstring(maro_format);
                 maro_newFormat[maro_percent + 1] = L'p';
                 maro_context.maro_fix(maro_diagnostic, maro_tokens[maro_index + 2].maro_start, maro_tokens[maro_index + 4].maro_end,
                     maro_newFormat + L", (void*)" + std::wstring(maro_tokens[maro_index + 4].maro_text),
-                    L"주소를 출력하려는 경우: %p와 (void*)로 수정합니다.");
+                    maro_diagnostic.friendlyMessage);
             }
         }
         if (maro_token.maro_text == L"(" && maro_context.maro_has(maro_index + 1, L"int") && maro_context.maro_has(maro_index + 2, L"*") &&
@@ -667,7 +694,7 @@ void maro_codeChecks(maro_Context& maro_context)
             const auto* maro_declaration = maro_context.maro_resolve(maro_index + 5);
             if (maro_declaration && maro_declaration->maro_type == L"double" && !maro_declaration->maro_pointer && !maro_declaration->maro_array)
                 maro_context.maro_add(L"MARO-POINTER-TYPE", maro_token.maro_start, maro_tokens[maro_index + 5].maro_end,
-                    L"double의 주소를 int*로 바꿔 읽으면 형식 별칭 규칙을 위반할 수 있습니다. 숫자 변환이면 값의 범위와 소수 처리 방법을 정해 값 자체를 변환하세요. 바이트 확인이면 충분한 unsigned char 배열에 원래 값의 sizeof 크기만큼 memcpy로 복사하세요. 의도를 결정해야 하므로 자동 수정하지 않습니다.", Maro_Severity::Warning, Maro_Evidence::Conditional);
+                    L"double을 int*로 읽지 마세요. 숫자는 범위를 확인해 변환하고, 바이트는 unsigned char 배열에 memcpy로 복사하세요.", Maro_Severity::Warning, Maro_Evidence::Conditional);
         }
         if (maro_token.maro_text == L"/" && maro_index + 1 < maro_tokens.size())
         {
@@ -685,7 +712,7 @@ void maro_codeChecks(maro_Context& maro_context)
             }
             if (maro_zero)
                 maro_context.maro_add(L"MARO-DIVIDE-ZERO", maro_tokens[maro_index + 1].maro_start, maro_tokens[maro_index + 1].maro_end,
-                    L"분모가 0인 상태로 이 나눗셈을 실행할 수 있습니다. 나누기 전에 분모 != 0을 확인하고, 0이면 계산을 건너뛰거나 다시 입력받으세요. 올바른 분모를 추측해 자동 변경하지 않습니다.", Maro_Severity::Warning, Maro_Evidence::Conditional);
+                    L"분모가 0일 수 있습니다. 분모 != 0일 때만 나누고, 0이면 건너뛰거나 다시 입력받으세요.", Maro_Severity::Warning, Maro_Evidence::Conditional);
         }
     }
 }

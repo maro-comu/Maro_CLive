@@ -13,8 +13,6 @@
 #include <string_view>
 #include <vector>
 
-class maro_TraceSession;
-
 enum class Maro_ProcessTermination
 {
     Exited,
@@ -68,8 +66,6 @@ struct Maro_ProcessRequest
     std::wstring workingDirectory;
     std::string standardInputUtf8;
     std::shared_ptr<maro_ProcessInput> maro_interactiveInput;
-    std::shared_ptr<maro_TraceSession> maro_trace;
-    std::wstring maro_traceSource;
     std::map<std::wstring, std::wstring, std::less<>> environmentOverrides;
     Maro_ProcessLimits limits;
     bool createNoWindow = true;

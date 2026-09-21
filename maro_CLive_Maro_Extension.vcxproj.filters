@@ -25,7 +25,6 @@
     <ClCompile Include="maro_SourceInsight.cpp"><Filter>maro_Source</Filter></ClCompile>
     <ClCompile Include="maro_SourceWindow.cpp"><Filter>maro_Source</Filter></ClCompile>
     <ClCompile Include="maro_InsightWorker.cpp"><Filter>maro_Source</Filter></ClCompile>
-    <ClCompile Include="maro_Trace.cpp"><Filter>maro_Source</Filter></ClCompile>
     <ClCompile Include="maro_Update.cpp"><Filter>maro_Source</Filter></ClCompile>
     <ClCompile Include="maro_DiagnosticWindow.cpp"><Filter>maro_Source</Filter></ClCompile>
     <ClCompile Include="maro_DiagnosticFilter.cpp"><Filter>maro_Source</Filter></ClCompile>
@@ -46,7 +45,6 @@
     <ClInclude Include="maro_SourceInsight.hpp"><Filter>maro_Header</Filter></ClInclude>
     <ClInclude Include="maro_SourceWindow.hpp"><Filter>maro_Header</Filter></ClInclude>
     <ClInclude Include="maro_InsightWorker.hpp"><Filter>maro_Header</Filter></ClInclude>
-    <ClInclude Include="maro_Trace.hpp"><Filter>maro_Header</Filter></ClInclude>
     <ClInclude Include="maro_Update.hpp"><Filter>maro_Header</Filter></ClInclude>
     <ClInclude Include="maro_OutputQueue.hpp"><Filter>maro_Header</Filter></ClInclude>
     <ClInclude Include="maro_DiagnosticWindow.hpp"><Filter>maro_Header</Filter></ClInclude>

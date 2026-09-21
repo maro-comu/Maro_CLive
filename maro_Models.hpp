@@ -8,7 +8,6 @@
 #include <vector>
 
 class maro_ProcessInput;
-class maro_TraceSession;
 
 enum class Maro_Language
 {
@@ -125,7 +124,6 @@ struct Maro_SourceRequest
     std::wstring maro_platform;
     std::wstring maro_msbuildPath;
     std::wstring maro_solutionPath;
-    std::shared_ptr<maro_TraceSession> maro_trace;
     unsigned maro_outputCodePage = 0;
     bool maro_background = false;
 };

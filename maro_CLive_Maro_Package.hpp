@@ -5,7 +5,6 @@
 #include "maro_DiagnosticWindow.hpp"
 #include "maro_SourceWindow.hpp"
 #include "maro_InsightWorker.hpp"
-#include "maro_Trace.hpp"
 
 #include <atlbase.h>
 #include <atlcom.h>
@@ -113,7 +112,6 @@ private:
     void maro_ApplyFix(const Maro_Diagnostic& maro_diagnostic);
     void maro_NavigateDiagnostic(const Maro_Diagnostic& maro_diagnostic);
     void maro_RequestInsight(const Maro_SourceRequest& maro_request);
-    HRESULT maro_StartTrace();
     void SetDiagnosticPending(const std::wstring& path, const wchar_t* status);
     void ProcessUi() noexcept;
     static void CALLBACK UiTimerProc(HWND window, UINT message, UINT_PTR timer, DWORD time) noexcept;
@@ -161,9 +159,6 @@ private:
     bool maro_creatingSource_ = false;
     bool maro_automatic_ = true;
     unsigned maro_codePage_ = 0;
-    std::shared_ptr<maro_TraceSession> maro_trace_;
-    std::mutex maro_traceMutex_;
-    std::optional<maro_TraceSnapshot> maro_traceSnapshot_;
     bool creatingWindow_ = false;
     std::mutex diagnosticMutex_;
     std::optional<Maro_ResultEnvelope> pendingDiagnostic_;

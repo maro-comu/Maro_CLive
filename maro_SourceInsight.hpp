@@ -27,7 +27,6 @@ struct maro_SourceItem
 struct maro_SourceLineInsight
 {
     std::wstring maro_text;
-    std::wstring maro_explanation;
     std::size_t maro_line = 1;
 };
 

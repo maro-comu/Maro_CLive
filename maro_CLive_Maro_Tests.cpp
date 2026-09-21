@@ -635,6 +635,8 @@ void maro_TestCompiledSolutions(Maro_TestState& maro_state)
     struct maro_Case { const wchar_t* maro_code; const wchar_t* maro_source; };
     const maro_Case maro_cases[] = {
         {L"MARO-MACRO-VALUE", L"#define MARO_CAP = 100;\nint main(void){int a[MARO_CAP]={7};return a[0];}"},
+        {L"MARO-MACRO-VALUE", L"#define MARO_CAP = 100;\nint main(void){int a=MARO_CAP;return a;}"},
+        {L"MARO-MACRO-VALUE", L"#define MARO_CAP = 100;\nint a=MARO_CAP;\nint main(void){return a;}"},
         {L"MARO-MACRO-PRECEDENCE", L"#define MARO_SQUARE(x) x * x\nint main(void){return 100/MARO_SQUARE(2+3);}"},
         {L"MARO-STRING-COMPARE", L"#include <string.h>\nint main(void){char* a=\"Hello\";if(a==\"Hello\"){return 1;}return 0;}"},
         {L"MARO-ARRAY-ASSIGNMENT", L"#include <string.h>\nint main(void){char* a=\"Hello\";char b[6];b=a;return b[0];}"},
@@ -1147,7 +1149,6 @@ void maro_TestProcessInput(const std::function<void(bool, std::string_view)>&);
 void maro_TestProjects(const std::function<void(bool, std::string_view)>&);
 void maro_TestSourceInsight(const std::function<void(bool, std::string_view)>&);
 void maro_TestEncoding(const std::function<void(bool, std::string_view)>&);
-void maro_TestTrace(const std::function<void(bool, std::string_view)>&);
 void maro_TestDiagnosticFilter(const std::function<void(bool, std::string_view)>&);
 void maro_TestSafeFixes(const std::function<void(bool, std::string_view)>&);
 
@@ -1161,7 +1162,6 @@ int main(int maro_argc, char** maro_argv)
     {
         maro_TestSourceInsight([&state](bool maro_ok, std::string_view maro_name) { state.Expect(maro_ok, maro_name); });
         maro_TestEncoding([&state](bool maro_ok, std::string_view maro_name) { state.Expect(maro_ok, maro_name); });
-        maro_TestTrace([&state](bool maro_ok, std::string_view maro_name) { state.Expect(maro_ok, maro_name); });
         maro_TestDiagnosticFilter([&state](bool maro_ok, std::string_view maro_name) { state.Expect(maro_ok, maro_name); });
         maro_TestSafeFixes([&state](bool maro_ok, std::string_view maro_name) { state.Expect(maro_ok, maro_name); });
         maro_TestProcessInput([&state](bool maro_ok, std::string_view maro_name) { state.Expect(maro_ok, std::string(maro_name)); });

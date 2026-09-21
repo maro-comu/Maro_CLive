@@ -131,12 +131,16 @@ bool maro_TestCodeDiagnostics()
             maro_finding->friendlyMessage.find(L"C:\\") == std::wstring::npos &&
             maro_finding->friendlyMessage.find(L'\0') == std::wstring::npos,
             "guidance excludes vague grammar advice, distracting source paths and embedded NUL characters");
+        maro_expect(maro_finding->friendlyMessage.size() <= 90,
+            "source guidance stays concise instead of presenting a long explanation paragraph");
         if (maro_finding->fix)
         {
             const auto maro_request = maro_testRequest(maro_example);
             maro_expect(!maro_finding->fix->description.empty() && maro_finding->fix->description.find(L'\0') == std::wstring::npos &&
                 maro_ValidateFix(maro_request, *maro_finding, 73, maro_request.sourcePath, maro_example).has_value(),
                 "proposed example replacement is independently regenerated and validated");
+            maro_expect(maro_finding->fix->description.size() <= 60,
+                "clickable source replacement label is a short explicit action");
             maro_expect(!maro_ValidateFix(maro_request, *maro_finding, 74, maro_request.sourcePath, maro_example) &&
                 !maro_ValidateFix(maro_request, *maro_finding, 73, maro_request.sourcePath, maro_example + L" "),
                 "stale solution cannot modify a newer source snapshot");
@@ -152,6 +156,9 @@ bool maro_TestCodeDiagnostics()
         const auto* maro_finding = maro_testFind(maro_findings, maro_code);
         maro_expect(maro_finding && maro_finding->fix && maro_finding->evidence == Maro_Evidence::Conditional,
             "intent-dependent one-click alternatives explicitly carry conditional evidence");
+        maro_expect(maro_finding && maro_finding->friendlyMessage.find(L"경우:") != std::wstring::npos &&
+            maro_finding->fix && maro_finding->fix->description.find(L"경우:") != std::wstring::npos,
+            "shortening the solution retains the user's intended behavior in both visible and clickable text");
     }
     const auto maro_before = maro_findings.size();
     maro_ImproveDiagnostics(maro_testRequest(maro_example), maro_findings);
@@ -167,6 +174,10 @@ bool maro_TestCodeDiagnostics()
     const maro_ReplacementCase maro_replacements[] = {
         {L"MARO-MACRO-VALUE", L"#define MAX_SIZE = 100;\nint main(){int a[MAX_SIZE];return 0;}",
             L"#define MAX_SIZE 100\nint main(){int a[MAX_SIZE];return 0;}", "numeric macro changes only its replacement list"},
+        {L"MARO-MACRO-VALUE", L"#define MAX_SIZE = 100;\nint main(){int x=MAX_SIZE;return x;}",
+            L"#define MAX_SIZE 100\nint main(){int x=MAX_SIZE;return x;}", "numeric macro used in a scalar initializer receives the same precise fix"},
+        {L"MARO-MACRO-VALUE", L"#define MAX_SIZE = 100;\nint x=MAX_SIZE;int main(){int a[MAX_SIZE];return x;}",
+            L"#define MAX_SIZE 100\nint x=MAX_SIZE;int main(){int a[MAX_SIZE];return x;}", "global initialization and array bounds can share a proven numeric macro fix"},
         {L"MARO-MACRO-PRECEDENCE", L"#define SQUARE(x) x * x\nint main(){return SQUARE(2 + 3);}",
             L"#define SQUARE(x) ((x) * (x))\nint main(){return SQUARE(2 + 3);}", "square macro groups both parameter uses and the whole expression"},
         {L"MARO-STRING-COMPARE", L"#include <string.h>\nint main(){char* a=\"Hello\";if(a==\"Hello\"){return 1;}return 0;}",
@@ -183,8 +194,12 @@ bool maro_TestCodeDiagnostics()
     for (const auto& maro_case : maro_replacements)
     {
         const auto maro_diagnostics = maro_testAnalyze(maro_case.maro_source);
-        maro_expect(maro_testReplacement(maro_case.maro_source, maro_testFind(maro_diagnostics, maro_case.maro_code),
+        const auto* maro_finding = maro_testFind(maro_diagnostics, maro_case.maro_code);
+        maro_expect(maro_testReplacement(maro_case.maro_source, maro_finding,
             maro_case.maro_expected), maro_case.maro_name);
+        const auto maro_request = maro_testRequest(maro_case.maro_source);
+        maro_expect(maro_finding && maro_ValidateFix(maro_request, *maro_finding, 73, maro_request.sourcePath, maro_case.maro_source).has_value(),
+            "each supported source replacement passes the independent apply-time safety check");
         maro_expect(!maro_testFind(maro_testAnalyze(maro_case.maro_expected), maro_case.maro_code),
             "applied repair removes its own root diagnosis without needing an unrelated edit");
     }
@@ -302,6 +317,22 @@ bool maro_TestCodeDiagnostics()
         maro_expect(!maro_testFind(maro_testAnalyze(maro_text), L"MARO-LOCAL-LIFETIME"),
             "returning static, global or caller-owned storage is not called a dangling local array");
     for (const auto* maro_text : {
+        L"#define SET = 100;\nint main(){int a SET int b=SET;return a+b;}",
+        L"#define SET = 100;\n#define ALIAS SET\nint main(){int a ALIAS int b=SET;return a+b;}",
+        L"#define SET = /* preserve */ 100;\nint main(){int b=SET;return b;}",
+        L"#define int Other\n#define SET = 100;\nint main(){int b=SET;return b;}",
+        L"#define SET = 100;\nint main(){int b=(SET);return b;}",
+        L"#define SET = 100;\nint main(){Custom b=SET;return 0;}",
+        L"#define SET = 100;\nint main(){int b=SET+1;return b;}"})
+    {
+        const auto maro_diagnostics = maro_testAnalyze(maro_text);
+        const auto* maro_finding = maro_testFind(maro_diagnostics, L"MARO-MACRO-VALUE");
+        maro_expect(!maro_finding || !maro_finding->fix,
+            "numeric macro repair preserves intentional fragments, aliases, comments and unproven initializer expressions");
+    }
+    maro_expect(!maro_testFind(maro_testAnalyze(L"int a[MAX_SIZE];\n#define MAX_SIZE = 100;\nint main(){return 0;}"), L"MARO-MACRO-VALUE"),
+        "a macro defined after its apparent use is not mistaken for the cause of that identifier error");
+    for (const auto* maro_text : {
         L"#define SET = 100;\nint main(){int a SET return 0;}",
         L"#define MAX_SIZE 100\n#define SQUARE(x) ((x)*(x))\nint main(){int a[MAX_SIZE];return SQUARE(2+3);}",
         L"#include <string.h>\n#include <stdio.h>\nint main(){const char* a=\"Hello\";char b[6];memcpy(b,a,6);if(strcmp(a,b)==0){printf(\"%s\",b);}return 0;}",
@@ -328,6 +359,21 @@ bool maro_TestCodeDiagnostics()
     maro_expect(maro_compilerCount(L"MARO-MACRO-VALUE") == 1 && maro_compilerCount(L"C2143") == 1 &&
         maro_compilerCount(L"C4431") == 0 && maro_compilerCount(L"C2065") == 1,
         "numeric macro cascade folds only the matching root while retaining a different macro and independent identifier error");
+    auto maro_scalarRequest = maro_testRequest(L"#define MAX_SIZE = 100;\nint main(){int a=MAX_SIZE;int b=unknown;return 0;}");
+    const auto maro_scalarLine = maro_scalarRequest.sourceText.find(L'\n') + 1;
+    const auto maro_scalarMacro = maro_scalarRequest.sourceText.find(L"MAX_SIZE;", maro_scalarLine) - maro_scalarLine + 1;
+    const auto maro_scalarUnknown = maro_scalarRequest.sourceText.find(L"unknown", maro_scalarLine) - maro_scalarLine + 1;
+    maro_compiler = {
+        maro_testCompiler(maro_scalarRequest, L"C2059", 2, maro_scalarMacro),
+        maro_testCompiler(maro_scalarRequest, L"C2143", 2, maro_scalarMacro),
+        maro_testCompiler(maro_scalarRequest, L"C2065", 2, maro_scalarUnknown),
+        maro_testCompiler(maro_scalarRequest, L"C2143", 2, maro_scalarUnknown)
+    };
+    maro_ImproveDiagnostics(maro_scalarRequest, maro_compiler);
+    const auto* maro_scalarRoot = maro_testFind(maro_compiler, L"MARO-MACRO-VALUE");
+    maro_expect(maro_scalarRoot && maro_scalarRoot->maro_relatedCount == 2 && maro_compilerCount(L"C2059") == 0 &&
+        maro_compilerCount(L"C2143") == 1 && maro_compilerCount(L"C2065") == 1,
+        "scalar macro cascade merges only syntax errors at that macro and preserves unrelated same-line failures");
     auto maro_initializerRequest = maro_testRequest(L"#include <stdio.h>\r\n\t#define MARO_CAP = 100;\r\nint main(void) {\r\n    int a[MARO_CAP] = {7}; int b[MARO_CAP] = 7; Unknown c[MARO_CAP] = {0};\r\n    return 0;\r\n}");
     const auto maro_at = [&](std::wstring_view maro_code, std::wstring_view maro_text, std::size_t maro_delta = 0) {
         const auto maro_position = maro_OffsetPosition(maro_initializerRequest.sourceText, maro_initializerRequest.sourceText.find(maro_text) + maro_delta);

@@ -880,15 +880,6 @@ std::vector<std::wstring> Maro_CompilerArguments(
         else
         {
             arguments.push_back(L"-O0");
-            if (request.maro_trace)
-            {
-                arguments.push_back(L"-g");
-                arguments.push_back(L"-gcodeview");
-                arguments.push_back(L"-Xlinker");
-                arguments.push_back(L"/DEBUG");
-                arguments.push_back(L"-Xlinker");
-                arguments.push_back(L"/PDB:" + (executablePath.parent_path() / L"maro_UserProgram.pdb").wstring());
-            }
             arguments.push_back(L"-include");
             arguments.push_back(liveOutputHeader.wstring());
         }
@@ -930,19 +921,11 @@ std::vector<std::wstring> Maro_CompilerArguments(
         else
         {
             arguments.push_back(L"/Od");
-            if (request.maro_trace) arguments.push_back(L"/Z7");
             arguments.push_back(L"/FI" + liveOutputHeader.wstring());
             arguments.push_back(L"/Fe:" + executablePath.wstring());
             arguments.push_back(L"/Fo:" + objectPath.wstring());
         }
         arguments.push_back(sourcePath.wstring());
-        if (!syntaxOnly && request.maro_trace)
-        {
-            arguments.push_back(L"/link");
-            arguments.push_back(L"/DEBUG");
-            arguments.push_back(L"/INCREMENTAL:NO");
-            arguments.push_back(L"/PDB:" + (executablePath.parent_path() / L"maro_UserProgram.pdb").wstring());
-        }
     }
     return arguments;
 }
@@ -1022,7 +1005,7 @@ Maro_AnalysisResult Maro_RunCompiler(
     processRequest.workingDirectory = workingDirectory.wstring();
     processRequest.environmentOverrides = toolchain.environment;
     processRequest.limits = Maro_CompilerProcessLimits(limits, syntaxOnly);
-    processRequest.maro_background = request.maro_background && !request.maro_trace;
+    processRequest.maro_background = request.maro_background;
 
     const Maro_ProcessResult process = Maro_RunProcess(processRequest, cancelled);
     result.resourceLimitsApplied = process.jobObjectApplied;

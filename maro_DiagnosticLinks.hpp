@@ -20,7 +20,7 @@ inline std::wstring maro_DiagnosticDocumentation(std::wstring_view maro_code)
     {
         std::wstring maro_anchor(maro_code);
         for (auto& maro_ch : maro_anchor) if (maro_ch >= L'A' && maro_ch <= L'Z') maro_ch += L'a' - L'A';
-        return L"https://github.com/maro-comu/Maro_CLive/blob/v2.3.4/maro_Diagnostics.md#" + maro_anchor;
+        return L"https://github.com/maro-comu/Maro_CLive/blob/v2.3.5/maro_Diagnostics.md#" + maro_anchor;
     }
     return {};
 }

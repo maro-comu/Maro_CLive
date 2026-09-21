@@ -136,7 +136,7 @@ Maro_Diagnostic Maro_MakeIdeFinding(
     diagnostic.findingId = L"Maro_IDE_" + std::to_wstring(request.sourceVersion) + L"_" + code;
     diagnostic.code = std::move(code);
     diagnostic.analyzer = L"CLive_Maro";
-    diagnostic.analyzerVersion = L"2.3.4";
+    diagnostic.analyzerVersion = L"2.3.5";
     diagnostic.severity = severity;
     diagnostic.evidence = evidence;
     diagnostic.friendlyMessage = std::move(message);
@@ -331,18 +331,12 @@ void Maro_Engine::ProcessOne(const Maro_PendingWork& work, std::stop_token stopT
         return;
     }
 
-    static const Maro_ToolchainInfo maro_defaultToolchain = Maro_DetectToolchain();
-    const auto& toolchain = [&]() -> const Maro_ToolchainInfo& {
-        if (!work.request.maro_trace) return maro_defaultToolchain;
-        static const Maro_ToolchainInfo maro_traceToolchain = Maro_DetectToolchain(true);
-        return maro_traceToolchain;
-    }();
+    static const Maro_ToolchainInfo toolchain = Maro_DetectToolchain();
     if (toolchain.kind == Maro_ToolchainKind::None)
     {
         Maro_ResultEnvelope result = Maro_BaseEnvelope(
             work.requestId, work.request, Maro_Phase::Completed, Maro_Status::ToolchainMissing,
-            work.request.maro_trace ? L"실제 한 줄 실행에는 Visual Studio MSVC C/C++ 도구가 필요합니다."
-                : L"Clang 또는 MSVC C/C++ 컴파일러를 찾지 못했습니다.");
+            L"Clang 또는 MSVC C/C++ 컴파일러를 찾지 못했습니다.");
         result.generatedSource = generated.text;
         result.snippetWrapped = generated.wrapped;
         result.diagnostics.push_back(Maro_MakeIdeFinding(
@@ -576,10 +570,7 @@ void Maro_Engine::ProcessOne(const Maro_PendingWork& work, std::stop_token stopT
     processRequest.limits.activeProcessLimit = 1;
     processRequest.limits.stdoutBytes = limits.standardOutputBytes;
     processRequest.limits.stderrBytes = limits.standardErrorBytes;
-    processRequest.maro_trace = work.request.maro_trace;
     processRequest.maro_background = work.request.maro_background;
-    processRequest.maro_traceSource = (temporary.path() /
-        (work.request.language == Maro_Language::C17 ? L"maro_UserSource.c" : L"maro_UserSource.cpp")).wstring();
     if (work.request.maro_input)
     {
         processRequest.maro_interactiveInput = work.request.maro_input;
@@ -712,7 +703,7 @@ void Maro_Engine::maro_ProcessProject(const Maro_PendingWork& maro_work,
     maro_request.maro_platform = maro_work.request.maro_platform;
     maro_request.maro_msbuildPath = maro_work.request.maro_msbuildPath;
     maro_request.maro_solutionPath = maro_work.request.maro_solutionPath;
-    maro_request.maro_background = maro_work.request.maro_background && !maro_work.request.maro_trace;
+    maro_request.maro_background = maro_work.request.maro_background;
     Publish(maro_work, Maro_BaseEnvelope(maro_work.requestId, maro_work.request,
         Maro_Phase::Analyzing, Maro_Status::Pending, L"프로젝트 빌드 중..."));
     maro_OutputDecoder maro_buildStdout;
@@ -762,9 +753,7 @@ void Maro_Engine::maro_ProcessProject(const Maro_PendingWork& maro_work,
     maro_process.maro_interactiveInput = maro_work.request.maro_input;
     maro_process.maro_rollingOutput = true;
     maro_process.maro_allowGuiWindows = true;
-    maro_process.maro_trace = maro_work.request.maro_trace;
     maro_process.maro_background = maro_work.request.maro_background;
-    maro_process.maro_traceSource = maro_work.request.sourcePath;
     maro_process.limits = {0, 0, 0, 0, 1u << 20, 1u << 20};
     maro_process.limits.maro_idleMilliseconds = 30'000;
     maro_DecodedStream maro_stdout(maro_work.request.maro_outputCodePage, maro_process.limits.stdoutBytes);
