@@ -1,4 +1,5 @@
 #include "maro_CodeDiagnostics.hpp"
+#include "maro_DiagnosticFilter.hpp"
 
 #include <algorithm>
 #include <cwctype>
@@ -6,6 +7,7 @@
 #include <map>
 #include <set>
 #include <string_view>
+#include <tuple>
 #include <utility>
 
 namespace
@@ -69,6 +71,7 @@ struct maro_Context
     std::set<std::wstring_view> maro_declaredFunctions;
     bool maro_stringHeader = false;
     bool maro_stdioHeader = false;
+    bool maro_stdlibHeader = false;
     bool maro_uncertain = false;
     std::size_t maro_initialCount = 0;
     mutable std::size_t maro_work = 0;
@@ -86,7 +89,7 @@ struct maro_Context
         Maro_Diagnostic maro_diagnostic;
         maro_diagnostic.code = maro_code;
         maro_diagnostic.analyzer = L"CLive_Maro source checks";
-        maro_diagnostic.analyzerVersion = L"2.3.5";
+        maro_diagnostic.analyzerVersion = L"2.4.0";
         maro_diagnostic.sourceVersion = maro_request.sourceVersion;
         maro_diagnostic.sourcePath = maro_request.sourcePath;
         maro_diagnostic.range.start = maro_position(maro_start);
@@ -210,6 +213,7 @@ bool maro_lex(maro_Context& maro_context, std::vector<maro_Token>& maro_all)
     {
         const auto maro_start = maro_index;
         const auto maro_ch = maro_text[maro_index];
+        if (!maro_index && maro_ch == L'\xfeff') { ++maro_index; continue; }
         if (maro_ch == L'\r' || maro_ch == L'\n')
         {
             if (maro_ch == L'\r' && maro_index + 1 < maro_text.size() && maro_text[maro_index + 1] == L'\n') ++maro_index;
@@ -304,6 +308,7 @@ void maro_directives(maro_Context& maro_context, const std::vector<maro_Token>& 
             const auto maro_name = maro_all[maro_index + 3].maro_text;
             if (maro_name == L"string") maro_context.maro_stringHeader = true;
             else if (maro_name == L"stdio") maro_context.maro_stdioHeader = true;
+            else if (maro_name == L"stdlib") maro_context.maro_stdlibHeader = true;
             else if (maro_name != L"stdlib" && maro_name != L"stddef" && maro_name != L"stdint" && maro_name != L"stdbool" && maro_name != L"limits" && maro_name != L"math") maro_context.maro_uncertain = true;
         }
         else if (maro_is(1, L"define") && maro_count >= 3 && maro_identifier(maro_all[maro_index + 2].maro_text))
@@ -499,6 +504,8 @@ void maro_declarations(maro_Context& maro_context)
             ++maro_type;
         }
         if (maro_type >= maro_tokens.size() || !maro_identifier(maro_tokens[maro_type].maro_text)) continue;
+        if (maro_context.maro_has(maro_type, L"return") || maro_context.maro_has(maro_type, L"goto") ||
+            maro_context.maro_has(maro_type, L"throw") || maro_context.maro_has(maro_type, L"co_return")) continue;
         auto maro_name = maro_type + 1;
         if (maro_context.maro_has(maro_name, L"const")) { maro_const = true; ++maro_name; }
         const bool maro_pointer = maro_context.maro_has(maro_name, L"*");
@@ -717,6 +724,343 @@ void maro_codeChecks(maro_Context& maro_context)
     }
 }
 
+std::optional<Maro_FixSuggestion> maro_missingHeaderFix(maro_Context& maro_context, const Maro_Diagnostic& maro_diagnostic)
+{
+    const auto& maro_request = maro_context.maro_request;
+    if (!maro_request.sourceVersion || maro_request.sourcePath.empty() || maro_request.mode != Maro_SourceMode::Program ||
+        maro_diagnostic.sourceVersion != maro_request.sourceVersion || maro_diagnostic.sourcePath != maro_request.sourcePath ||
+        maro_diagnostic.range.generated || maro_diagnostic.evidence != Maro_Evidence::StaticAnalysis ||
+        !maro_context.maro_macros.empty() || maro_context.maro_uncertain || maro_diagnostic.originalDiagnostic.size() > 16384)
+        return std::nullopt;
+    std::wstring maro_analyzer = maro_diagnostic.analyzer;
+    std::wstring maro_original = maro_diagnostic.originalDiagnostic;
+    std::transform(maro_analyzer.begin(), maro_analyzer.end(), maro_analyzer.begin(), std::towlower);
+    std::transform(maro_original.begin(), maro_original.end(), maro_original.begin(), std::towlower);
+    const bool maro_msvc = (maro_analyzer.find(L"msvc") != std::wstring::npos || maro_analyzer == L"msbuild") &&
+        (maro_diagnostic.code == L"C2065" || maro_diagnostic.code == L"C3861" || maro_diagnostic.code == L"C4013");
+    const bool maro_clang = maro_analyzer.find(L"clang") != std::wstring::npos &&
+        (maro_diagnostic.code == L"C-NAME-1001" || maro_diagnostic.code == L"CPP-NAME-1001" ||
+            maro_diagnostic.code == L"C-COMP-1001" || maro_diagnostic.code == L"CPP-COMP-1001" ||
+            maro_diagnostic.code == L"-Wimplicit-function-declaration" || maro_diagnostic.code == L"-Wimplicit-library-function-declaration") &&
+        (maro_original.find(L"undeclared function") != std::wstring::npos ||
+            maro_original.find(L"undeclared identifier") != std::wstring::npos ||
+            maro_original.find(L"undeclared library function") != std::wstring::npos);
+    if (!maro_msvc && !maro_clang) return std::nullopt;
+    if (!maro_diagnostic.range.start.line || maro_diagnostic.range.start.line > maro_context.maro_lines.size() ||
+        !maro_diagnostic.range.start.column) return std::nullopt;
+    const auto maro_lineStart = maro_context.maro_lines[maro_diagnostic.range.start.line - 1];
+    auto maro_lineEnd = maro_request.sourceText.find_first_of(L"\r\n", maro_lineStart);
+    if (maro_lineEnd == std::wstring::npos) maro_lineEnd = maro_request.sourceText.size();
+    if (maro_diagnostic.range.start.column - 1 > maro_lineEnd - maro_lineStart) return std::nullopt;
+    const auto maro_offset = maro_lineStart + maro_diagnostic.range.start.column - 1;
+    const auto& maro_tokens = maro_context.maro_tokens;
+    for (const auto& maro_token : maro_tokens)
+    {
+        if (++maro_context.maro_work > 262144) return std::nullopt;
+        if (maro_token.maro_text == L"namespace" || maro_token.maro_text == L"class" || maro_token.maro_text == L"template" ||
+            maro_token.maro_text == L"using" || maro_token.maro_text == L"asm" || maro_token.maro_text == L"__asm") return std::nullopt;
+    }
+    struct maro_HeaderFunction
+    {
+        std::wstring_view maro_function;
+        std::wstring_view maro_header;
+        bool maro_present;
+    };
+    const maro_HeaderFunction maro_functions[] = {
+        {L"printf", L"stdio.h", maro_context.maro_stdioHeader}, {L"puts", L"stdio.h", maro_context.maro_stdioHeader},
+        {L"strcmp", L"string.h", maro_context.maro_stringHeader}, {L"memcpy", L"string.h", maro_context.maro_stringHeader},
+        {L"malloc", L"stdlib.h", maro_context.maro_stdlibHeader}, {L"free", L"stdlib.h", maro_context.maro_stdlibHeader}
+    };
+    for (const auto& maro_function : maro_functions)
+    {
+        if (maro_function.maro_present ||
+            maro_original.find(L"'" + std::wstring(maro_function.maro_function) + L"'") == std::wstring::npos ||
+            !maro_context.maro_libraryFunction(maro_function.maro_function)) continue;
+        bool maro_call = false;
+        bool maro_binding = false;
+        for (std::size_t maro_index = 0; maro_index < maro_tokens.size(); ++maro_index)
+        {
+            if (++maro_context.maro_work > 262144) return std::nullopt;
+            const auto& maro_token = maro_tokens[maro_index];
+            if (maro_token.maro_text != maro_function.maro_function) continue;
+            if (!maro_context.maro_standalone(maro_index) || !maro_context.maro_scopes[maro_token.maro_scope].maro_function ||
+                !maro_context.maro_has(maro_index + 1, L"(") || maro_tokens[maro_index + 1].maro_match == maro_none ||
+                (maro_index && maro_identifier(maro_tokens[maro_index - 1].maro_text) &&
+                    !maro_context.maro_has(maro_index - 1, L"return")))
+            {
+                maro_binding = true;
+                break;
+            }
+            const auto maro_end = maro_tokens[maro_tokens[maro_index + 1].maro_match].maro_end;
+            if (maro_offset >= maro_token.maro_start && maro_offset < maro_end) maro_call = true;
+        }
+        if (maro_binding || !maro_call) continue;
+        const auto maro_insert = !maro_request.sourceText.empty() && maro_request.sourceText.front() == L'\xfeff' ? 1u : 0u;
+        const auto maro_firstBreak = maro_request.sourceText.find_first_of(L"\r\n");
+        const auto maro_newline = maro_firstBreak != std::wstring::npos && maro_request.sourceText[maro_firstBreak] == L'\r'
+            ? (maro_firstBreak + 1 < maro_request.sourceText.size() && maro_request.sourceText[maro_firstBreak + 1] == L'\n' ? L"\r\n" : L"\r") : L"\n";
+        Maro_TextEdit maro_edit;
+        maro_edit.sourceVersion = maro_request.sourceVersion;
+        maro_edit.startOffsetUtf16 = maro_insert;
+        maro_edit.replacement = L"#include <" + std::wstring(maro_function.maro_header) + L">" + maro_newline;
+        return Maro_FixSuggestion{L"#include <" + std::wstring(maro_function.maro_header) + L">를 추가합니다.", {std::move(maro_edit)}};
+    }
+    return std::nullopt;
+}
+
+void maro_relatedEvidence(Maro_Diagnostic& maro_root, const Maro_Diagnostic& maro_related)
+{
+    const auto maro_available = (std::numeric_limits<std::size_t>::max)() - maro_root.maro_relatedCount;
+    maro_root.maro_relatedCount += maro_related.maro_relatedCount >= maro_available
+        ? maro_available : maro_related.maro_relatedCount + 1;
+    if (maro_root.originalDiagnostic.size() >= 16384) return;
+    if (!maro_root.originalDiagnostic.empty()) maro_root.originalDiagnostic += L'\n';
+    const auto& maro_original = maro_related.originalDiagnostic.empty() ? maro_related.code : maro_related.originalDiagnostic;
+    maro_root.originalDiagnostic.append(maro_original, 0, 16384 - maro_root.originalDiagnostic.size());
+}
+
+void maro_missingHeaders(maro_Context& maro_context)
+{
+    using maro_HeaderKey = std::tuple<std::wstring, std::uint64_t, std::size_t, std::size_t, std::wstring, std::wstring>;
+    std::map<maro_HeaderKey, std::size_t> maro_roots;
+    std::vector<bool> maro_removed(maro_context.maro_diagnostics.size(), false);
+    for (std::size_t maro_index = 0; maro_index < maro_context.maro_initialCount; ++maro_index)
+    {
+        auto& maro_diagnostic = maro_context.maro_diagnostics[maro_index];
+        if (maro_diagnostic.fix) continue;
+        if (auto maro_fix = maro_missingHeaderFix(maro_context, maro_diagnostic))
+        {
+            maro_diagnostic.friendlyMessage = maro_fix->description;
+            maro_diagnostic.fix = std::move(maro_fix);
+            const auto& maro_edit = maro_diagnostic.fix->edits.front();
+            const auto [maro_root, maro_inserted] = maro_roots.try_emplace(
+                maro_HeaderKey{maro_diagnostic.sourcePath, maro_edit.sourceVersion, maro_edit.startOffsetUtf16,
+                    maro_edit.lengthUtf16, maro_edit.expectedText, maro_edit.replacement}, maro_index);
+            if (!maro_inserted)
+            {
+                maro_relatedEvidence(maro_context.maro_diagnostics[maro_root->second], maro_diagnostic);
+                maro_removed[maro_index] = true;
+            }
+        }
+    }
+    if (maro_roots.empty()) return;
+    std::vector<Maro_Diagnostic> maro_kept;
+    maro_kept.reserve(maro_context.maro_diagnostics.size());
+    for (std::size_t maro_index = 0; maro_index < maro_context.maro_diagnostics.size(); ++maro_index)
+        if (!maro_removed[maro_index]) maro_kept.push_back(std::move(maro_context.maro_diagnostics[maro_index]));
+    maro_context.maro_initialCount -= static_cast<std::size_t>(std::count(maro_removed.begin(),
+        maro_removed.begin() + maro_context.maro_initialCount, true));
+    maro_context.maro_diagnostics = std::move(maro_kept);
+}
+
+bool maro_oneNameEdit(std::wstring_view maro_first, std::wstring_view maro_second)
+{
+    if (maro_first == maro_second || maro_first.size() < 2 || maro_second.size() < 2 ||
+        maro_first.size() > 128 || maro_second.size() > 128 ||
+        maro_first.size() + 1 < maro_second.size() || maro_second.size() + 1 < maro_first.size()) return false;
+    std::size_t maro_at = 0;
+    while (maro_at < (std::min)(maro_first.size(), maro_second.size()) && maro_first[maro_at] == maro_second[maro_at]) ++maro_at;
+    if (maro_first.size() == maro_second.size())
+    {
+        if (maro_first.substr(maro_at + 1) == maro_second.substr(maro_at + 1)) return true;
+        return maro_at + 1 < maro_first.size() && maro_first[maro_at] == maro_second[maro_at + 1] &&
+            maro_first[maro_at + 1] == maro_second[maro_at] && maro_first.substr(maro_at + 2) == maro_second.substr(maro_at + 2);
+    }
+    if (maro_first.size() < maro_second.size()) return maro_first.substr(maro_at) == maro_second.substr(maro_at + 1);
+    return maro_first.substr(maro_at + 1) == maro_second.substr(maro_at);
+}
+
+struct maro_NameProof
+{
+    std::size_t maro_token = 0;
+    std::size_t maro_declaration = 0;
+    Maro_TextEdit maro_edit;
+};
+
+std::optional<maro_NameProof> maro_variableNameProof(maro_Context& maro_context, const Maro_Diagnostic& maro_diagnostic)
+{
+    const auto& maro_request = maro_context.maro_request;
+    if (!maro_request.sourceVersion || maro_request.sourcePath.empty() || maro_request.mode != Maro_SourceMode::Program ||
+        maro_diagnostic.sourceVersion != maro_request.sourceVersion || maro_diagnostic.sourcePath != maro_request.sourcePath ||
+        maro_diagnostic.range.generated || !maro_context.maro_macros.empty() || maro_context.maro_uncertain ||
+        maro_diagnostic.severity != Maro_Severity::Error || maro_diagnostic.originalDiagnostic.size() > 16384 ||
+        (maro_diagnostic.evidence != Maro_Evidence::StaticAnalysis && maro_diagnostic.evidence != Maro_Evidence::Conditional)) return std::nullopt;
+    std::wstring maro_analyzer = maro_diagnostic.analyzer;
+    std::wstring maro_original = maro_diagnostic.originalDiagnostic;
+    std::transform(maro_analyzer.begin(), maro_analyzer.end(), maro_analyzer.begin(), std::towlower);
+    std::transform(maro_original.begin(), maro_original.end(), maro_original.begin(), std::towlower);
+    const bool maro_msvc = (maro_analyzer.find(L"msvc") != std::wstring::npos || maro_analyzer == L"msbuild") && maro_diagnostic.code == L"C2065";
+    const bool maro_clang = maro_analyzer.find(L"clang") != std::wstring::npos &&
+        (maro_diagnostic.code == L"C-NAME-1001" || maro_diagnostic.code == L"CPP-NAME-1001") &&
+        maro_original.find(L"undeclared identifier") != std::wstring::npos;
+    if ((!maro_msvc && !maro_clang) || !maro_diagnostic.range.start.line ||
+        maro_diagnostic.range.start.line > maro_context.maro_lines.size() || !maro_diagnostic.range.start.column) return std::nullopt;
+    const auto maro_lineStart = maro_context.maro_lines[maro_diagnostic.range.start.line - 1];
+    auto maro_lineEnd = maro_request.sourceText.find_first_of(L"\r\n", maro_lineStart);
+    if (maro_lineEnd == std::wstring::npos) maro_lineEnd = maro_request.sourceText.size();
+    if (maro_diagnostic.range.start.column - 1 > maro_lineEnd - maro_lineStart) return std::nullopt;
+    const auto maro_offset = maro_lineStart + maro_diagnostic.range.start.column - 1;
+    const auto& maro_tokens = maro_context.maro_tokens;
+    const auto maro_found = std::upper_bound(maro_tokens.begin(), maro_tokens.end(), maro_offset,
+        [](std::size_t maro_position, const maro_Token& maro_token) { return maro_position < maro_token.maro_start; });
+    if (maro_found == maro_tokens.begin()) return std::nullopt;
+    const auto maro_tokenIndex = static_cast<std::size_t>(maro_found - maro_tokens.begin() - 1);
+    const auto& maro_token = maro_tokens[maro_tokenIndex];
+    if (maro_offset >= maro_token.maro_end || !maro_identifier(maro_token.maro_text) || maro_token.maro_text.size() < 2 ||
+        !maro_context.maro_standalone(maro_tokenIndex) || maro_context.maro_has(maro_tokenIndex + 1, L"(") ||
+        maro_diagnostic.originalDiagnostic.find(L"'" + std::wstring(maro_token.maro_text) + L"'") == std::wstring::npos ||
+        maro_context.maro_declaredFunctions.contains(maro_token.maro_text)) return std::nullopt;
+    const auto maro_function = maro_context.maro_scopes[maro_token.maro_scope].maro_function;
+    if (!maro_function) return std::nullopt;
+    for (const auto& maro_part : maro_tokens)
+    {
+        if (++maro_context.maro_work > 262144) return std::nullopt;
+        if (maro_part.maro_text == L"namespace" || maro_part.maro_text == L"class" || maro_part.maro_text == L"template" ||
+            maro_part.maro_text == L"using" || maro_part.maro_text == L"typedef" || maro_part.maro_text == L"asm" || maro_part.maro_text == L"__asm") return std::nullopt;
+    }
+    for (std::size_t maro_index = 0; maro_index < maro_tokens.size(); ++maro_index)
+    {
+        if (++maro_context.maro_work > 262144) return std::nullopt;
+        if (maro_tokens[maro_index].maro_text == maro_token.maro_text &&
+            (!maro_context.maro_scopes[maro_tokens[maro_index].maro_scope].maro_function ||
+                !maro_context.maro_standalone(maro_index) || maro_context.maro_has(maro_index + 1, L"("))) return std::nullopt;
+    }
+    auto maro_candidate = maro_none;
+    std::set<std::wstring_view> maro_visible;
+    auto maro_scope = maro_token.maro_scope;
+    for (;;)
+    {
+        if (maro_context.maro_scopes[maro_scope].maro_function != maro_function) break;
+        for (std::size_t maro_index = maro_context.maro_declarations.size(); maro_index > 0; --maro_index)
+        {
+            if (++maro_context.maro_work > 262144) return std::nullopt;
+            const auto& maro_declaration = maro_context.maro_declarations[maro_index - 1];
+            if (maro_declaration.maro_scope != maro_scope || maro_declaration.maro_token >= maro_tokenIndex ||
+                maro_declaration.maro_endToken >= maro_tokenIndex ||
+                maro_declaration.maro_type == L"return") continue;
+            if (maro_declaration.maro_name == maro_token.maro_text) return std::nullopt;
+            if (!maro_visible.insert(maro_declaration.maro_name).second) continue;
+            const auto maro_type = maro_declaration.maro_type;
+            if ((maro_type != L"int" && maro_type != L"char" && maro_type != L"short" && maro_type != L"long" &&
+                    maro_type != L"float" && maro_type != L"double" && maro_type != L"signed" && maro_type != L"unsigned" &&
+                    maro_type != L"bool" && (maro_type != L"void" || !maro_declaration.maro_pointer)) ||
+                !maro_oneNameEdit(maro_token.maro_text, maro_declaration.maro_name)) continue;
+            if (maro_candidate != maro_none) return std::nullopt;
+            maro_candidate = maro_index - 1;
+        }
+        if (!maro_scope) break;
+        maro_scope = maro_context.maro_scopes[maro_scope].maro_parent;
+    }
+    if (maro_candidate == maro_none) return std::nullopt;
+    for (std::size_t maro_index = 0; maro_index < maro_tokens.size(); ++maro_index)
+    {
+        if (++maro_context.maro_work > 262144) return std::nullopt;
+        if (maro_tokens[maro_index].maro_text != maro_context.maro_declarations[maro_candidate].maro_name) continue;
+        if (!maro_context.maro_standalone(maro_index) || maro_context.maro_has(maro_index + 1, L"(") ||
+            (maro_index && (maro_context.maro_has(maro_index - 1, L"&") || maro_context.maro_has(maro_index - 1, L"&&")))) return std::nullopt;
+    }
+    maro_NameProof maro_proof;
+    maro_proof.maro_token = maro_tokenIndex;
+    maro_proof.maro_declaration = maro_candidate;
+    maro_proof.maro_edit.sourceVersion = maro_request.sourceVersion;
+    maro_proof.maro_edit.startOffsetUtf16 = maro_token.maro_start;
+    maro_proof.maro_edit.lengthUtf16 = maro_token.maro_end - maro_token.maro_start;
+    maro_proof.maro_edit.expectedText = maro_token.maro_text;
+    maro_proof.maro_edit.replacement = maro_context.maro_declarations[maro_candidate].maro_name;
+    return maro_proof;
+}
+
+void maro_variableNames(maro_Context& maro_context)
+{
+    using maro_NameKey = std::pair<std::wstring, std::size_t>;
+    std::map<maro_NameKey, std::size_t> maro_roots;
+    std::vector<bool> maro_removed(maro_context.maro_diagnostics.size(), false);
+    std::vector<std::pair<std::size_t, maro_NameProof>> maro_references;
+    for (std::size_t maro_index = 0; maro_index < maro_context.maro_initialCount; ++maro_index)
+    {
+        auto& maro_diagnostic = maro_context.maro_diagnostics[maro_index];
+        if (maro_diagnostic.fix) continue;
+        auto maro_proof = maro_variableNameProof(maro_context, maro_diagnostic);
+        if (!maro_proof) continue;
+        const auto [maro_root, maro_inserted] = maro_roots.try_emplace(
+            maro_NameKey{maro_proof->maro_edit.expectedText, maro_proof->maro_declaration}, maro_index);
+        if (maro_inserted)
+        {
+            maro_references.emplace_back(maro_root->second, *maro_proof);
+            maro_diagnostic.range.start = maro_context.maro_position(maro_proof->maro_edit.startOffsetUtf16);
+            maro_diagnostic.range.end = maro_context.maro_position(maro_proof->maro_edit.startOffsetUtf16 + maro_proof->maro_edit.lengthUtf16);
+            maro_diagnostic.friendlyMessage = L"변수명이 다릅니다. '" + maro_proof->maro_edit.expectedText + L"'를 '" + maro_proof->maro_edit.replacement + L"'로 바꿉니다.";
+            maro_diagnostic.evidence = Maro_Evidence::Conditional;
+            maro_diagnostic.fix = Maro_FixSuggestion{maro_diagnostic.friendlyMessage, {std::move(maro_proof->maro_edit)}};
+        }
+        else
+        {
+            auto& maro_rootDiagnostic = maro_context.maro_diagnostics[maro_root->second];
+            if (maro_rootDiagnostic.fix->edits.size() >= 32) continue;
+            maro_references.emplace_back(maro_root->second, *maro_proof);
+            const auto maro_duplicate = std::any_of(maro_rootDiagnostic.fix->edits.begin(), maro_rootDiagnostic.fix->edits.end(),
+                [&](const Maro_TextEdit& maro_edit) { return maro_edit.startOffsetUtf16 == maro_proof->maro_edit.startOffsetUtf16; });
+            if (!maro_duplicate) maro_rootDiagnostic.fix->edits.push_back(std::move(maro_proof->maro_edit));
+            maro_relatedEvidence(maro_rootDiagnostic, maro_diagnostic);
+            maro_removed[maro_index] = true;
+        }
+    }
+    if (maro_roots.empty()) return;
+    for (std::size_t maro_index = 0; maro_index < maro_context.maro_initialCount; ++maro_index)
+    {
+        const auto& maro_diagnostic = maro_context.maro_diagnostics[maro_index];
+        if (maro_removed[maro_index] || (maro_diagnostic.code != L"C2100" && maro_diagnostic.code != L"C2109") ||
+            maro_diagnostic.severity != Maro_Severity::Error || maro_diagnostic.evidence != Maro_Evidence::StaticAnalysis ||
+            maro_diagnostic.range.generated || !maro_diagnostic.range.start.line ||
+            maro_diagnostic.range.start.line > maro_context.maro_lines.size() || !maro_diagnostic.range.start.column) continue;
+        const auto maro_lineStart = maro_context.maro_lines[maro_diagnostic.range.start.line - 1];
+        auto maro_lineEnd = maro_context.maro_request.sourceText.find_first_of(L"\r\n", maro_lineStart);
+        if (maro_lineEnd == std::wstring::npos) maro_lineEnd = maro_context.maro_request.sourceText.size();
+        if (maro_diagnostic.range.start.column - 1 > maro_lineEnd - maro_lineStart) continue;
+        const auto maro_offset = maro_lineStart + maro_diagnostic.range.start.column - 1;
+        for (const auto& [maro_rootIndex, maro_reference] : maro_references)
+        {
+            if (++maro_context.maro_work > 262144) break;
+            auto& maro_root = maro_context.maro_diagnostics[maro_rootIndex];
+            const auto& maro_declaration = maro_context.maro_declarations[maro_reference.maro_declaration];
+            if (maro_diagnostic.sourceVersion != maro_root.sourceVersion || maro_diagnostic.sourcePath != maro_root.sourcePath ||
+                maro_diagnostic.analyzer != maro_root.analyzer || maro_diagnostic.analyzerVersion != maro_root.analyzerVersion ||
+                maro_declaration.maro_type == L"void" || (!maro_declaration.maro_pointer && !maro_declaration.maro_array)) continue;
+            const auto& maro_token = maro_context.maro_tokens[maro_reference.maro_token];
+            auto maro_start = maro_token.maro_start;
+            auto maro_end = maro_token.maro_end;
+            if (maro_diagnostic.code == L"C2100")
+            {
+                if (!maro_reference.maro_token || !maro_context.maro_has(maro_reference.maro_token - 1, L"*")) continue;
+                if (maro_reference.maro_token >= 2)
+                {
+                    const auto& maro_before = maro_context.maro_tokens[maro_reference.maro_token - 2];
+                    if ((maro_identifier(maro_before.maro_text) && maro_before.maro_text != L"return") ||
+                        maro_before.maro_literal || maro_integer(maro_before.maro_text) != maro_none ||
+                        maro_before.maro_text == L")" || maro_before.maro_text == L"]") continue;
+                }
+                maro_start = maro_context.maro_tokens[maro_reference.maro_token - 1].maro_start;
+            }
+            else
+            {
+                if (!maro_context.maro_has(maro_reference.maro_token + 1, L"[")) continue;
+                maro_end = maro_context.maro_tokens[maro_reference.maro_token + 1].maro_end;
+            }
+            if (maro_offset < maro_start || maro_offset >= maro_end) continue;
+            maro_relatedEvidence(maro_root, maro_diagnostic);
+            maro_removed[maro_index] = true;
+            break;
+        }
+    }
+    std::vector<Maro_Diagnostic> maro_kept;
+    maro_kept.reserve(maro_context.maro_diagnostics.size());
+    for (std::size_t maro_index = 0; maro_index < maro_context.maro_diagnostics.size(); ++maro_index)
+        if (!maro_removed[maro_index]) maro_kept.push_back(std::move(maro_context.maro_diagnostics[maro_index]));
+    maro_context.maro_initialCount -= static_cast<std::size_t>(std::count(maro_removed.begin(),
+        maro_removed.begin() + maro_context.maro_initialCount, true));
+    maro_context.maro_diagnostics = std::move(maro_kept);
+}
+
 void maro_deduplicate(maro_Context& maro_context)
 {
     auto& maro_diagnostics = maro_context.maro_diagnostics;
@@ -762,13 +1106,7 @@ void maro_deduplicate(maro_Context& maro_context)
             }
             if (!maro_sameIssue) continue;
             maro_removed[maro_index] = true;
-            maro_diagnostic.maro_relatedCount += 1 + maro_compiler.maro_relatedCount;
-            if (maro_diagnostic.originalDiagnostic.size() < 16384)
-            {
-                if (!maro_diagnostic.originalDiagnostic.empty()) maro_diagnostic.originalDiagnostic += L'\n';
-                const auto& maro_original = maro_compiler.originalDiagnostic.empty() ? maro_compiler.code : maro_compiler.originalDiagnostic;
-                maro_diagnostic.originalDiagnostic.append(maro_original, 0, 16384 - maro_diagnostic.originalDiagnostic.size());
-            }
+            maro_relatedEvidence(maro_diagnostic, maro_compiler);
             break;
         }
     }
@@ -784,6 +1122,7 @@ void maro_ImproveDiagnostics(const Maro_SourceRequest& maro_request, std::vector
 {
     if (maro_request.sourceText.empty() || maro_request.sourceText.size() > 262144 || maro_diagnostics.size() > 1024) return;
     if (std::any_of(maro_diagnostics.begin(), maro_diagnostics.end(), [](const Maro_Diagnostic& maro_item) { return maro_item.analyzer == L"CLive_Maro source checks"; })) return;
+    maro_diagnostics = maro_GroupDiagnostics(maro_diagnostics);
     maro_Context maro_context{maro_request, maro_diagnostics};
     maro_context.maro_initialCount = maro_diagnostics.size();
     std::vector<maro_Token> maro_all;
@@ -800,6 +1139,62 @@ void maro_ImproveDiagnostics(const Maro_SourceRequest& maro_request, std::vector
         maro_diagnostics.resize(maro_context.maro_initialCount);
         return;
     }
+    maro_missingHeaders(maro_context);
+    maro_variableNames(maro_context);
     maro_codeChecks(maro_context);
     maro_deduplicate(maro_context);
+}
+
+bool maro_VerifyMissingHeaderFix(const Maro_SourceRequest& maro_request, const Maro_Diagnostic& maro_diagnostic)
+{
+    if (maro_request.sourceText.empty() || maro_request.sourceText.size() > 262144 ||
+        !maro_diagnostic.fix || maro_diagnostic.fix->edits.size() != 1) return false;
+    std::vector<Maro_Diagnostic> maro_diagnostics;
+    maro_Context maro_context{maro_request, maro_diagnostics};
+    std::vector<maro_Token> maro_all;
+    if (!maro_lex(maro_context, maro_all)) return false;
+    maro_directives(maro_context, maro_all);
+    if (maro_context.maro_uncertain || !maro_structure(maro_context)) return false;
+    maro_declarations(maro_context);
+    if (maro_context.maro_uncertain) return false;
+    const auto maro_fix = maro_missingHeaderFix(maro_context, maro_diagnostic);
+    if (!maro_fix) return false;
+    const auto& maro_expected = maro_fix->edits.front();
+    const auto& maro_actual = maro_diagnostic.fix->edits.front();
+    return maro_expected.sourceVersion == maro_actual.sourceVersion &&
+        maro_expected.startOffsetUtf16 == maro_actual.startOffsetUtf16 && maro_expected.lengthUtf16 == maro_actual.lengthUtf16 &&
+        maro_expected.expectedText == maro_actual.expectedText && maro_expected.replacement == maro_actual.replacement;
+}
+
+bool maro_VerifyVariableNameFix(const Maro_SourceRequest& maro_request, const Maro_Diagnostic& maro_diagnostic)
+{
+    if (maro_request.sourceText.empty() || maro_request.sourceText.size() > 262144 ||
+        !maro_diagnostic.fix || maro_diagnostic.fix->edits.empty() || maro_diagnostic.fix->edits.size() > 32) return false;
+    std::vector<Maro_Diagnostic> maro_diagnostics;
+    maro_Context maro_context{maro_request, maro_diagnostics};
+    std::vector<maro_Token> maro_all;
+    if (!maro_lex(maro_context, maro_all)) return false;
+    maro_directives(maro_context, maro_all);
+    if (maro_context.maro_uncertain || !maro_structure(maro_context)) return false;
+    maro_declarations(maro_context);
+    if (maro_context.maro_uncertain) return false;
+    auto maro_binding = maro_none;
+    std::wstring maro_name;
+    for (const auto& maro_edit : maro_diagnostic.fix->edits)
+    {
+        if (maro_edit.startOffsetUtf16 > maro_request.sourceText.size()) return false;
+        auto maro_reference = maro_diagnostic;
+        maro_reference.range.start = maro_context.maro_position(maro_edit.startOffsetUtf16);
+        const auto maro_proof = maro_variableNameProof(maro_context, maro_reference);
+        if (!maro_proof || (maro_binding != maro_none && (maro_binding != maro_proof->maro_declaration || maro_name != maro_edit.expectedText))) return false;
+        const auto& maro_expected = maro_proof->maro_edit;
+        if (maro_expected.sourceVersion != maro_edit.sourceVersion || maro_expected.startOffsetUtf16 != maro_edit.startOffsetUtf16 ||
+            maro_expected.lengthUtf16 != maro_edit.lengthUtf16 || maro_expected.expectedText != maro_edit.expectedText ||
+            maro_expected.replacement != maro_edit.replacement) return false;
+        maro_binding = maro_proof->maro_declaration;
+        maro_name = maro_edit.expectedText;
+    }
+    const auto& maro_first = maro_diagnostic.fix->edits.front();
+    const auto maro_position = maro_context.maro_position(maro_first.startOffsetUtf16);
+    return maro_diagnostic.range.start.line == maro_position.line && maro_diagnostic.range.start.column == maro_position.column;
 }

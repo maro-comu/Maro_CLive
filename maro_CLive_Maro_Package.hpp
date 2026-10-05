@@ -5,6 +5,7 @@
 #include "maro_DiagnosticWindow.hpp"
 #include "maro_SourceWindow.hpp"
 #include "maro_InsightWorker.hpp"
+#include "maro_Preferences.hpp"
 
 #include <atlbase.h>
 #include <atlcom.h>
@@ -159,6 +160,9 @@ private:
     bool maro_creatingSource_ = false;
     bool maro_automatic_ = true;
     unsigned maro_codePage_ = 0;
+    std::unique_ptr<maro_PreferencesWorker> maro_preferences_;
+    bool maro_preferencesLoaded_ = false;
+    ULONGLONG maro_preferencesDeadline_ = 0;
     bool creatingWindow_ = false;
     std::mutex diagnosticMutex_;
     std::optional<Maro_ResultEnvelope> pendingDiagnostic_;

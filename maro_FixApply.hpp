@@ -88,6 +88,8 @@ inline std::optional<maro_ValidatedFix> maro_ValidateFix(
     });
     if (!maro_known) maro_known = maro_ValidateSemicolonEdit(maro_expected, maro_diagnostic, maro_version, maro_path, maro_current).has_value() &&
         maro_VerifyCompilerSemicolonFix(maro_expected, maro_diagnostic.fix->edits.front());
+    if (!maro_known) maro_known = maro_VerifyMissingHeaderFix(maro_expected, maro_diagnostic);
+    if (!maro_known) maro_known = maro_VerifyVariableNameFix(maro_expected, maro_diagnostic);
     if (!maro_known) return std::nullopt;
     auto maro_edits = maro_diagnostic.fix->edits;
     std::sort(maro_edits.begin(), maro_edits.end(), [](const Maro_TextEdit& maro_a, const Maro_TextEdit& maro_b) {

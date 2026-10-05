@@ -123,6 +123,9 @@ STDMETHODIMP Maro_CLive_Maro_Package::SetSite(IServiceProvider* serviceProvider)
         }
         shuttingDown_ = false;
         initializationResult_ = E_PENDING;
+        maro_preferencesLoaded_ = false;
+        maro_preferencesDeadline_ = GetTickCount64() + 2000;
+        maro_preferences_ = std::make_unique<maro_PreferencesWorker>();
         serviceProvider_ = serviceProvider;
         liveInstance_ = this;
         uiTimer_ = SetTimer(nullptr, 0, 100, UiTimerProc);
@@ -221,7 +224,21 @@ void Maro_CLive_Maro_Package::ProcessUi() noexcept
     {
         if (!initialized_ && initializationResult_ == E_PENDING)
         {
-            InitializeUi();
+            maro_Preferences maro_loaded;
+            if (!maro_preferencesLoaded_ && maro_preferences_ && maro_preferences_->maro_TakeLoaded(maro_loaded))
+            {
+                maro_automatic_ = maro_loaded.maro_automatic;
+                maro_codePage_ = maro_loaded.maro_codePage;
+                maro_preferencesLoaded_ = true;
+            }
+            if (!maro_preferencesLoaded_ && GetTickCount64() >= maro_preferencesDeadline_)
+            {
+                maro_automatic_ = false;
+                maro_codePage_ = 0;
+                maro_preferencesLoaded_ = true;
+                updateNotice_.Push(L"설정을 읽지 못해 자동 실행을 꺼 두었습니다. 켜기로 다시 시작할 수 있습니다.");
+            }
+            if (maro_preferencesLoaded_) InitializeUi();
         }
         if (initialized_ && !shuttingDown_)
         {
@@ -279,6 +296,7 @@ void Maro_CLive_Maro_Package::ProcessUi() noexcept
             if ((maro_commands & 128) != 0)
             {
                 maro_automatic_ = !maro_automatic_;
+                if (maro_preferences_) maro_preferences_->maro_QueueSave({maro_automatic_, maro_codePage_});
                 maro_CancelLiveWork();
                 maro_stopped_ = false;
                 if (diagnosticWindow_) diagnosticWindow_->maro_SetAutomatic(maro_automatic_);
@@ -498,6 +516,7 @@ void Maro_CLive_Maro_Package::maro_ConfigurePane(maro_DiagnosticWindow* maro_pan
     maro_pane->maro_SetAutomatic(maro_automatic_);
     maro_pane->maro_SetEncodingCallback([this](unsigned maro_page) {
         maro_codePage_ = maro_page;
+        if (maro_preferences_) maro_preferences_->maro_QueueSave({maro_automatic_, maro_codePage_});
         if (diagnosticWindow_) diagnosticWindow_->maro_SetEncoding(maro_page);
         if (maro_liveOutput_) maro_liveOutput_->maro_SetEncoding(maro_page);
         maro_pendingCommands_.fetch_or(16);
@@ -1400,10 +1419,10 @@ void Maro_CLive_Maro_Package::RunUpdate() noexcept
     const HRESULT initialized = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
     try
     {
-        const auto check = maro_CheckForUpdate({2, 3, 5}, &updateCancelled_);
+        const auto check = maro_CheckForUpdate({2, 4, 0}, &updateCancelled_);
         if (check.status == Maro_UpdateCheckStatus::Current)
         {
-            QueueUpdateMessage(L"최신 버전입니다. (v2.3.5)\r\n");
+            QueueUpdateMessage(L"최신 버전입니다. (v2.4.0)\r\n");
         }
         else if (check.status == Maro_UpdateCheckStatus::Failed)
         {
@@ -1445,13 +1464,14 @@ void Maro_CLive_Maro_Package::PublishDiagnosticResult(const Maro_ResultEnvelope&
             return;
         }
 
+        const auto maro_grouped = maro_GroupDiagnostics(result.diagnostics);
         if (result.sourceVersion == diagnosticSourceVersion_.load(std::memory_order_acquire))
         {
             Maro_ResultEnvelope snapshot;
             snapshot.sourceVersion = result.sourceVersion;
             snapshot.status = maro_analyzed ? Maro_Status::Success : result.status;
             snapshot.statusText = maro_analyzed ? L"검사 완료" : result.statusText;
-            snapshot.diagnostics = maro_GroupDiagnostics(result.diagnostics);
+            snapshot.diagnostics = maro_grouped;
             snapshot.maro_compileMilliseconds = result.maro_compileMilliseconds;
             snapshot.maro_runMilliseconds = result.maro_runMilliseconds;
             snapshot.hasExitCode = result.hasExitCode;
@@ -1469,14 +1489,15 @@ void Maro_CLive_Maro_Package::PublishDiagnosticResult(const Maro_ResultEnvelope&
         {
             text << L"문제 없음.\r\n";
         }
-        for (const Maro_Diagnostic& diagnostic : result.diagnostics)
+        for (const Maro_Diagnostic& diagnostic : maro_grouped)
         {
-            text << (diagnostic.range.start.line == 0 ? 1 : diagnostic.range.start.line);
-            if (diagnostic.range.start.column != 0)
+            if (diagnostic.range.start.line != 0)
             {
-                text << L":" << diagnostic.range.start.column;
+                text << diagnostic.range.start.line;
+                if (diagnostic.range.start.column != 0) text << L":" << diagnostic.range.start.column;
+                text << L" ";
             }
-            text << L" " << Maro_SeverityText(diagnostic.severity);
+            text << Maro_SeverityText(diagnostic.severity);
             if (!diagnostic.code.empty())
             {
                 text << L" " << diagnostic.code;
@@ -1555,9 +1576,6 @@ void Maro_CLive_Maro_Package::WriteRun(std::wstring_view text) noexcept
 
 void Maro_CLive_Maro_Package::Shutdown() noexcept
 {
-    maro_insightWorker_.reset();
-    if (maro_input_) maro_input_->maro_Close();
-    maro_input_.reset();
     shuttingDown_ = true;
     initialized_ = false;
     if (uiTimer_ != 0)
@@ -1565,6 +1583,12 @@ void Maro_CLive_Maro_Package::Shutdown() noexcept
         KillTimer(nullptr, uiTimer_);
         uiTimer_ = 0;
     }
+    maro_preferences_.reset();
+    maro_preferencesLoaded_ = false;
+    maro_preferencesDeadline_ = 0;
+    maro_insightWorker_.reset();
+    if (maro_input_) maro_input_->maro_Close();
+    maro_input_.reset();
     liveDeadline_ = 0;
     maro_pendingCommands_.store(0);
     updateCancelled_.store(true, std::memory_order_release);

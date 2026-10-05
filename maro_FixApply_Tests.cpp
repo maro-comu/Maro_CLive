@@ -13,6 +13,9 @@ void maro_TestSafeFixes(const std::function<void(bool, std::string_view)>& maro_
         maro_DiagnosticDocumentation(L"MARO-MACRO-VALUE").ends_with(L"#maro-macro-value"), "Clang and local rule documentation links");
     maro_expect(maro_DiagnosticDocumentation(L"-W").empty() && maro_DiagnosticDocumentation(L"MARO-UNKNOWN").empty(),
         "empty warning identifiers and undocumented internal codes have no invented links");
+    maro_expect(maro_DiagnosticDocumentation(L"0xC0000005").starts_with(L"https://learn.microsoft.com/") &&
+        maro_DiagnosticDocumentation(L"0xC0000094").starts_with(L"https://learn.microsoft.com/") &&
+        maro_DiagnosticDocumentation(L"0x00000011").empty(), "known runtime status codes link only to the official NTSTATUS reference");
     const auto maro_parse = [](const Maro_SourceRequest& maro_source, std::size_t maro_line, std::wstring_view maro_code = L"C2143") {
         return Maro_ParseCompilerDiagnostics(L"maro_UserSource.c(" + std::to_wstring(maro_line) +
             L",1): error " + std::wstring(maro_code) + L": syntax error: missing ';' before 'return'",

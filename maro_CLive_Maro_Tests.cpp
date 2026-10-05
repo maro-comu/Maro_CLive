@@ -1,5 +1,6 @@
 #include "maro_Analyzer.hpp"
 #include "maro_CodeDiagnostics.hpp"
+#include "maro_FixApply.hpp"
 #include "maro_Engine.hpp"
 #include "maro_OutputQueue.hpp"
 #include "maro_Process.hpp"
@@ -15,6 +16,7 @@
 #endif
 #include <windows.h>
 
+#include <algorithm>
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
@@ -688,6 +690,97 @@ void maro_TestCompiledSolutions(Maro_TestState& maro_state)
     }
 }
 
+void maro_TestCompilerEvidenceRepairs(Maro_TestState& maro_state)
+{
+    const struct maro_Case { const wchar_t* maro_text; Maro_Language maro_language; const wchar_t* maro_expected; } maro_cases[] = {
+        {L"int main(void){printf(\"hello\");puts(\"world\");return 0;}", Maro_Language::Cpp20, L"#include <stdio.h>"},
+        {L"int main(void){printf(\"hello\");return 0;}", Maro_Language::C17, L"#include <stdio.h>"},
+        {L"int main(void){char a[4]={0};memcpy(a,\"ok\",3);return strcmp(a,\"ok\");}", Maro_Language::Cpp20, L"#include <string.h>"},
+        {L"int main(void){void* a=malloc(4);free(a);return 0;}", Maro_Language::Cpp20, L"#include <stdlib.h>"},
+        {L"int main(void){int vaule=7;int total=value+value;return total;}", Maro_Language::C17, L"vaule"},
+        {L"int main(void){int count=7;return coutn+coutn;}", Maro_Language::Cpp20, L"count"},
+        {L"int main(void){int a=7;int* ptr=&a;return *prt;}", Maro_Language::C17, L"ptr"},
+        {L"int main(void){int array[2]={7,8};return arary[0];}", Maro_Language::C17, L"array"}
+    };
+    std::uint64_t maro_version = 8500;
+    for (const auto& maro_case : maro_cases)
+    {
+        Maro_SourceRequest maro_request;
+        maro_request.sourceVersion = ++maro_version;
+        maro_request.sourcePath = maro_case.maro_language == Maro_Language::C17 ? L"maro_Evidence.c" : L"maro_Evidence.cpp";
+        maro_request.sourceText = maro_case.maro_text;
+        maro_request.language = maro_case.maro_language;
+        maro_request.execute = false;
+        const auto maro_original = Maro_RunToCompletion(maro_request);
+        std::optional<maro_ValidatedFix> maro_fix;
+        std::size_t maro_roots = 0;
+        if (maro_original)
+            for (const auto& maro_finding : maro_original->diagnostics)
+                if (maro_finding.fix && std::any_of(maro_finding.fix->edits.begin(), maro_finding.fix->edits.end(),
+                    [&](const Maro_TextEdit& maro_edit) { return maro_edit.replacement.find(maro_case.maro_expected) != std::wstring::npos; }))
+                {
+                    ++maro_roots;
+                    maro_fix = maro_ValidateFix(maro_request, maro_finding, maro_request.sourceVersion,
+                        maro_request.sourcePath, maro_request.sourceText);
+                }
+        maro_state.Expect(maro_original && maro_fix.has_value(), "real compiler evidence produces an independently validated missing-header or variable-name repair");
+        maro_state.Expect(maro_roots == 1, "one shared header or variable mismatch is shown once across compiler-confirmed uses");
+        if (!maro_fix)
+        {
+            if (maro_original) std::wcerr << maro_case.maro_text << L"\n" << maro_original->compilerOutput << L'\n';
+            continue;
+        }
+        const auto maro_offset = [&](Maro_SourcePosition maro_position) {
+            std::size_t maro_index = 0, maro_line = 1;
+            while (maro_line < maro_position.line && maro_index < maro_request.sourceText.size())
+            {
+                if (maro_request.sourceText[maro_index++] == L'\n') ++maro_line;
+            }
+            return maro_index + maro_position.column - 1;
+        };
+        const auto maro_start = maro_offset(maro_fix->maro_start);
+        const auto maro_end = maro_offset(maro_fix->maro_end);
+        maro_request.sourceText.replace(maro_start, maro_end - maro_start, maro_fix->maro_replacement);
+        ++maro_request.sourceVersion;
+        const auto maro_repaired = Maro_RunToCompletion(maro_request);
+        maro_state.Expect(maro_repaired && maro_repaired->status == Maro_Status::Success,
+            "one atomic compiler-confirmed repair compiles successfully without running the program");
+        if (maro_repaired && maro_repaired->status != Maro_Status::Success) std::wcerr << maro_repaired->compilerOutput << L'\n';
+    }
+}
+
+void maro_TestRuntimeHeaderIsolation(Maro_TestState& maro_state)
+{
+    for (const auto maro_language : {Maro_Language::C17, Maro_Language::Cpp20})
+    {
+        Maro_SourceRequest maro_request;
+        maro_request.sourceVersion = maro_language == Maro_Language::C17 ? 8801 : 8802;
+        maro_request.sourcePath = maro_language == Maro_Language::C17 ? L"maro_HeaderIsolation.c" : L"maro_HeaderIsolation.cpp";
+        maro_request.sourceText = L"int main(void){printf(\"maro_header_isolated\");return 0;}";
+        maro_request.execute = true;
+        maro_request.maro_input = std::make_shared<maro_ProcessInput>();
+        const auto maro_result = Maro_RunToCompletion(maro_request);
+        std::optional<maro_ValidatedFix> maro_fix;
+        if (maro_result)
+            for (const auto& maro_finding : maro_result->diagnostics)
+                if (maro_finding.fix && maro_finding.fix->description.find(L"stdio.h") != std::wstring::npos)
+                    maro_fix = maro_ValidateFix(maro_request, maro_finding, maro_request.sourceVersion,
+                        maro_request.sourcePath, maro_request.sourceText);
+        maro_state.Expect(maro_fix && maro_fix->maro_start.line == 1 && maro_fix->maro_start.column == 1,
+            "automatic live-run compiler diagnoses user header omissions instead of inheriting the streaming helper's headers");
+        if (!maro_fix) continue;
+        maro_request.sourceText.insert(0, maro_fix->maro_replacement);
+        ++maro_request.sourceVersion;
+        maro_request.maro_input = std::make_shared<maro_ProcessInput>();
+        const auto maro_repaired = Maro_RunToCompletion(maro_request);
+        maro_state.Expect(maro_repaired && maro_repaired->status == Maro_Status::Success &&
+            maro_repaired->standardOutput == L"maro_header_isolated" && std::none_of(maro_repaired->diagnostics.begin(),
+                maro_repaired->diagnostics.end(), [](const Maro_Diagnostic& maro_finding) {
+                    return maro_finding.code == L"C4013" || maro_finding.code == L"C3861" || maro_finding.code == L"C2065";
+                }), "missing-header repair compiles and streams real stdout in both C and C++ live execution");
+    }
+}
+
 void Maro_TestEngineSuccess(Maro_TestState& state)
 {
     const Maro_ToolchainInfo toolchain = Maro_DetectToolchain();
@@ -825,6 +918,69 @@ void Maro_TestEngineCompileFailure(Maro_TestState& state)
     }
     state.Expect(hasOriginalDiagnostic, "diagnostic preserves the original compiler message");
     state.Expect(hasUserLocation, "diagnostic maps to a user source location");
+}
+
+void maro_TestEngineRuntimeGuidance(Maro_TestState& maro_state)
+{
+    struct maro_RuntimeCase
+    {
+        const wchar_t* maro_statement;
+        const wchar_t* maro_code;
+        const wchar_t* maro_action;
+        std::uint32_t maro_exitCode;
+    };
+    constexpr maro_RuntimeCase maro_cases[] = {
+        {L"return 17;", L"RUN-1002", L"return", 17},
+        {L"ExitProcess(0xC0000005u);", L"0xC0000005", L"포인터", 0xC0000005u},
+        {L"ExitProcess(0xC0000094u);", L"0xC0000094", L"분모", 0xC0000094u},
+        {L"ExitProcess(0xC00000FDu);", L"0xC00000FD", L"재귀", 0xC00000FDu},
+        {L"ExitProcess(0xC0000135u);", L"0xC0000135", L"DLL", 0xC0000135u}
+    };
+    std::uint64_t maro_version = 9'000;
+    for (const auto& maro_case : maro_cases)
+    {
+        Maro_SourceRequest maro_request;
+        maro_request.sourceVersion = ++maro_version;
+        maro_request.sourcePath = L"maro_RuntimeCheck.c";
+        maro_request.sourceText = L"#include <stdio.h>\n#include <windows.h>\nint main(void){puts(\"maro_before_exit\");fflush(stdout);" +
+            std::wstring(maro_case.maro_statement) + L"}\n";
+        const auto maro_result = Maro_RunToCompletion(std::move(maro_request));
+        maro_state.Expect(maro_result && maro_result->status == Maro_Status::RuntimeFailed &&
+            maro_result->hasExitCode && maro_result->exitCode == maro_case.maro_exitCode,
+            "single-file runtime completion preserves the observed nonzero exit code");
+        if (!maro_result) continue;
+        maro_state.Expect(maro_result->standardOutput.find(L"maro_before_exit") != std::wstring::npos,
+            "runtime failure preserves stdout produced before termination");
+        bool maro_matched = false;
+        for (const auto& maro_diagnostic : maro_result->diagnostics)
+        {
+            if (maro_diagnostic.code != maro_case.maro_code) continue;
+            maro_matched = maro_diagnostic.evidence == Maro_Evidence::RuntimeObservation &&
+                maro_diagnostic.friendlyMessage.find(maro_case.maro_action) != std::wstring::npos &&
+                maro_diagnostic.range.start.line == 0 && maro_diagnostic.range.start.column == 0 &&
+                !maro_diagnostic.fix && maro_diagnostic.originalDiagnostic == maro_result->statusText;
+            if (maro_case.maro_exitCode == 17)
+                maro_matched = maro_matched && maro_diagnostic.severity == Maro_Severity::Warning &&
+                    maro_diagnostic.friendlyMessage.find(L"항상 실행 오류") != std::wstring::npos &&
+                    maro_diagnostic.friendlyMessage.find(L"운영체제 예외") == std::wstring::npos;
+        }
+        maro_state.Expect(maro_matched, "runtime advice identifies the exit kind without guessing a source position or edit");
+    }
+    Maro_SourceRequest maro_request;
+    maro_request.sourceVersion = ++maro_version;
+    maro_request.sourceText = L"#include <stdio.h>\nint main(void){for(;;)puts(\"maro_output_limit\");}\n";
+    Maro_FinalResultCapture maro_capture;
+    Maro_Engine maro_engine([&](Maro_ResultEnvelope maro_result) { maro_capture.Publish(std::move(maro_result)); });
+    Maro_ExecutionLimits maro_limits;
+    maro_limits.standardOutputBytes = 128;
+    maro_engine.SetLimits(maro_limits);
+    maro_engine.Submit(std::move(maro_request));
+    const auto maro_limited = maro_capture.Wait(std::chrono::seconds(30));
+    maro_engine.Shutdown();
+    maro_state.Expect(maro_limited && maro_limited->status == Maro_Status::LimitExceeded &&
+        std::any_of(maro_limited->diagnostics.begin(), maro_limited->diagnostics.end(),
+            [](const Maro_Diagnostic& maro_diagnostic) { return maro_diagnostic.code == L"RUN-LIMIT"; }),
+        "process-enforced output limit has a resource diagnosis rather than an ordinary return-code error");
 }
 
 void Maro_TestEngineCpp20Success(Maro_TestState& state)
@@ -1149,6 +1305,7 @@ void maro_TestProcessInput(const std::function<void(bool, std::string_view)>&);
 void maro_TestProjects(const std::function<void(bool, std::string_view)>&);
 void maro_TestSourceInsight(const std::function<void(bool, std::string_view)>&);
 void maro_TestEncoding(const std::function<void(bool, std::string_view)>&);
+void maro_TestPreferences(const std::function<void(bool, std::string_view)>&);
 void maro_TestDiagnosticFilter(const std::function<void(bool, std::string_view)>&);
 void maro_TestSafeFixes(const std::function<void(bool, std::string_view)>&);
 
@@ -1162,6 +1319,7 @@ int main(int maro_argc, char** maro_argv)
     {
         maro_TestSourceInsight([&state](bool maro_ok, std::string_view maro_name) { state.Expect(maro_ok, maro_name); });
         maro_TestEncoding([&state](bool maro_ok, std::string_view maro_name) { state.Expect(maro_ok, maro_name); });
+        maro_TestPreferences([&state](bool maro_ok, std::string_view maro_name) { state.Expect(maro_ok, maro_name); });
         maro_TestDiagnosticFilter([&state](bool maro_ok, std::string_view maro_name) { state.Expect(maro_ok, maro_name); });
         maro_TestSafeFixes([&state](bool maro_ok, std::string_view maro_name) { state.Expect(maro_ok, maro_name); });
         maro_TestProcessInput([&state](bool maro_ok, std::string_view maro_name) { state.Expect(maro_ok, std::string(maro_name)); });
@@ -1181,9 +1339,12 @@ int main(int maro_argc, char** maro_argv)
         maro_TestOutputQueue(state);
         maro_TestEngineLifecycle(state);
         maro_TestCompiledSolutions(state);
+        maro_TestCompilerEvidenceRepairs(state);
+        maro_TestRuntimeHeaderIsolation(state);
         Maro_TestEngineSuccess(state);
         Maro_TestEngineStreamingOutput(state);
         Maro_TestEngineCompileFailure(state);
+        maro_TestEngineRuntimeGuidance(state);
         Maro_TestEngineCpp20Success(state);
         Maro_TestVisualStudioLanguageDetection(state);
         Maro_TestOptionalVisualStudioRead(state);

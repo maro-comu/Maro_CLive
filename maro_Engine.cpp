@@ -136,11 +136,140 @@ Maro_Diagnostic Maro_MakeIdeFinding(
     diagnostic.findingId = L"Maro_IDE_" + std::to_wstring(request.sourceVersion) + L"_" + code;
     diagnostic.code = std::move(code);
     diagnostic.analyzer = L"CLive_Maro";
-    diagnostic.analyzerVersion = L"2.3.5";
+    diagnostic.analyzerVersion = L"2.4.0";
     diagnostic.severity = severity;
     diagnostic.evidence = evidence;
     diagnostic.friendlyMessage = std::move(message);
     return diagnostic;
+}
+
+std::wstring maro_HexExitCode(std::uint32_t maro_code)
+{
+    std::wstring maro_text = L"0x00000000";
+    constexpr wchar_t maro_digits[] = L"0123456789ABCDEF";
+    for (std::size_t maro_index = 0; maro_index < 8; ++maro_index)
+    {
+        maro_text[9 - maro_index] = maro_digits[maro_code & 15];
+        maro_code >>= 4;
+    }
+    return maro_text;
+}
+
+std::wstring maro_RuntimeAdvice(std::uint32_t maro_code)
+{
+    switch (maro_code)
+    {
+    case 0xC0000005u: return L"포인터의 유효성, 배열 범위와 해제된 메모리 접근을 확인하세요.";
+    case 0xC0000094u: return L"정수 나눗셈이나 나머지 연산 전에 분모가 0인지 확인하세요.";
+    case 0xC00000FDu: return L"재귀 종료 조건을 확인하고 큰 지역 배열은 동적 메모리로 옮기세요.";
+    case 0xC0000017u: return L"메모리 할당 결과를 확인하고 불필요한 할당을 줄이세요.";
+    case 0xC0000135u: return L"필요한 DLL과 실행 환경을 설치하고 실행 파일의 DLL 검색 경로를 확인하세요.";
+    case 0xC000007Bu: return L"실행 파일과 DLL의 x64/x86 구성이 일치하는지 확인하세요.";
+    case 0xC000001Du: return L"대상 CPU에 맞는 명령어 옵션과 잘못된 함수 포인터 호출을 확인하세요.";
+    case 0xC0000409u: return L"보안 검사나 강제 종료 원인을 디버거에서 확인하세요. 배열 범위와 함수 인수도 확인하세요.";
+    default: return {};
+    }
+}
+
+std::wstring maro_RuntimeReason(std::uint32_t maro_code)
+{
+    switch (maro_code)
+    {
+    case 0xC0000005u: return L"메모리 접근 오류";
+    case 0xC0000094u: return L"정수 0 나누기";
+    case 0xC00000FDu: return L"스택 공간 부족";
+    case 0xC0000017u: return L"메모리 부족";
+    case 0xC0000135u: return L"필요한 DLL 없음";
+    case 0xC000007Bu: return L"실행 파일 또는 DLL 형식 불일치";
+    case 0xC000001Du: return L"지원하지 않거나 잘못된 CPU 명령";
+    case 0xC0000409u: return L"보안 검사 또는 강제 종료";
+    default: return {};
+    }
+}
+
+void maro_CompleteExecution(const Maro_SourceRequest& maro_request,
+    const Maro_ProcessResult& maro_process, Maro_ResultEnvelope& maro_result, bool maro_project = false)
+{
+    maro_result.status = Maro_Status::RuntimeFailed;
+    std::wstring maro_code = L"RUN-1002", maro_message;
+    switch (maro_process.termination)
+    {
+    case Maro_ProcessTermination::Cancelled:
+        maro_result.status = Maro_Status::Cancelled;
+        maro_result.statusText = L"실행을 중지했습니다.";
+        return;
+    case Maro_ProcessTermination::WallTimedOut:
+    case Maro_ProcessTermination::CpuTimedOut:
+        maro_result.status = Maro_Status::TimedOut;
+        maro_result.statusText = maro_request.maro_input || maro_project
+            ? L"출력 없이 30초 동안 계산이 계속되어 중지했습니다. 입력 대기는 제한하지 않습니다."
+            : L"실행 시간이 제한을 초과해 프로세스 트리를 종료했습니다.";
+        maro_result.diagnostics.push_back(maro_MakeTimeoutDiagnostic(maro_request, maro_project));
+        return;
+    case Maro_ProcessTermination::OutputLimit:
+    case Maro_ProcessTermination::MemoryLimit:
+    case Maro_ProcessTermination::ProcessLimit:
+        maro_result.status = Maro_Status::LimitExceeded;
+        maro_code = L"RUN-LIMIT";
+        maro_result.statusText = L"실행 자원 제한을 초과해 중지했습니다.";
+        maro_message = maro_process.termination == Maro_ProcessTermination::OutputLimit
+            ? L"반복 출력의 양과 종료 조건을 확인하세요."
+            : maro_process.termination == Maro_ProcessTermination::MemoryLimit
+                ? L"메모리 할당량과 해제 여부를 확인하세요." : L"추가 프로세스 실행이 필요한지 확인하세요.";
+        break;
+    case Maro_ProcessTermination::StartFailed:
+    case Maro_ProcessTermination::InternalError:
+        maro_result.status = maro_process.termination == Maro_ProcessTermination::StartFailed
+            ? Maro_Status::SandboxUnavailable : Maro_Status::InternalError;
+        maro_code = L"RUN-START";
+        maro_result.statusText = L"프로그램을 시작하거나 실행 상태를 확인하지 못했습니다. Windows 오류 " +
+            std::to_wstring(maro_process.win32Error) + L".";
+        maro_message = maro_process.win32Error == ERROR_FILE_NOT_FOUND || maro_process.win32Error == ERROR_PATH_NOT_FOUND
+            ? L"실행 파일 경로와 빌드 결과를 확인하세요."
+            : maro_process.win32Error == ERROR_ACCESS_DENIED ? L"실행 파일 접근 권한과 보안 프로그램의 차단 여부를 확인하세요."
+                : maro_process.win32Error == ERROR_BAD_EXE_FORMAT ? L"실행 파일의 형식과 x64/x86 구성을 확인하세요."
+                    : maro_process.win32Error == ERROR_DIRECTORY ? L"실행 작업 폴더가 존재하는지 확인하세요."
+                    : L"Windows 오류 번호를 확인하고 실행 파일과 실행 환경을 점검하세요.";
+        break;
+    case Maro_ProcessTermination::Exited:
+        if (maro_process.hasExitCode && maro_process.exitCode == 0)
+        {
+            maro_result.status = Maro_Status::Success;
+            maro_result.statusText = maro_process.standardOutputUtf8.empty()
+                ? L"정상 종료했습니다. 실제 stdout 출력은 없습니다." : L"정상 종료했습니다.";
+            if (maro_process.standardOutputUtf8.empty())
+                maro_result.diagnostics.push_back(Maro_MakeIdeFinding(maro_request, L"RUN-0000",
+                    Maro_Severity::Info, Maro_Evidence::RuntimeObservation, L"정상 종료했습니다. 출력이 필요하면 출력 함수를 추가하세요."));
+            return;
+        }
+        if (maro_process.hasExitCode)
+        {
+            const auto maro_reason = maro_RuntimeReason(maro_process.exitCode);
+            if (!maro_reason.empty())
+            {
+                maro_code = maro_HexExitCode(maro_process.exitCode);
+                maro_result.statusText = maro_reason + L" 종료 코드(" + maro_code + L")로 끝났습니다.";
+                maro_message = maro_reason + L": " + maro_RuntimeAdvice(maro_process.exitCode);
+            }
+            else
+            {
+                maro_result.statusText = L"프로그램이 종료 코드 " + std::to_wstring(maro_process.exitCode) + L"로 끝났습니다.";
+                maro_message = L"프로그램의 return 값과 stderr 출력을 확인하세요. 0이 아닌 반환 값이 항상 실행 오류를 뜻하지는 않습니다.";
+            }
+        }
+        else
+        {
+            maro_result.statusText = L"프로그램의 종료 상태를 확인하지 못했습니다.";
+            maro_message = L"실행 상태와 stderr 출력을 확인하세요.";
+        }
+        break;
+    }
+    const auto maro_severity = maro_process.termination == Maro_ProcessTermination::Exited &&
+        maro_process.hasExitCode && maro_RuntimeReason(maro_process.exitCode).empty() ? Maro_Severity::Warning : Maro_Severity::Error;
+    auto maro_diagnostic = Maro_MakeIdeFinding(maro_request, std::move(maro_code), maro_severity,
+        Maro_Evidence::RuntimeObservation, std::move(maro_message));
+    maro_diagnostic.originalDiagnostic = maro_result.statusText;
+    maro_result.diagnostics.push_back(std::move(maro_diagnostic));
 }
 }
 
@@ -626,42 +755,8 @@ void Maro_Engine::ProcessOne(const Maro_PendingWork& work, std::stop_token stopT
         return;
     }
 
-    Maro_Status finalStatus = Maro_Status::RuntimeFailed;
-    std::wstring statusText = L"프로그램 실행이 비정상적으로 끝났습니다.";
-    if (process.termination == Maro_ProcessTermination::WallTimedOut ||
-        process.termination == Maro_ProcessTermination::CpuTimedOut)
-    {
-        finalStatus = Maro_Status::TimedOut;
-        statusText = work.request.maro_input ? L"출력 없이 30초 동안 계산이 계속되어 중지했습니다. 입력 대기는 제한하지 않습니다."
-            : L"실행 시간이 제한을 초과해 프로세스 트리를 종료했습니다.";
-    }
-    else if (process.termination == Maro_ProcessTermination::OutputLimit ||
-             process.termination == Maro_ProcessTermination::MemoryLimit ||
-             process.termination == Maro_ProcessTermination::ProcessLimit)
-    {
-        finalStatus = Maro_Status::LimitExceeded;
-        statusText = L"실행 자원 제한을 초과해 프로세스 트리를 종료했습니다.";
-    }
-    else if (process.termination == Maro_ProcessTermination::StartFailed ||
-             process.termination == Maro_ProcessTermination::InternalError)
-    {
-        finalStatus = Maro_Status::SandboxUnavailable;
-        statusText = L"제한된 실행 프로세스를 시작하지 못했습니다.";
-    }
-    else if (process.hasExitCode && process.exitCode == 0)
-    {
-        finalStatus = Maro_Status::Success;
-        statusText = process.standardOutputUtf8.empty()
-            ? L"정상 종료했습니다. 실제 stdout 출력은 없습니다."
-            : L"정상 종료했습니다.";
-    }
-    else if (process.hasExitCode)
-    {
-        statusText = L"프로그램이 종료 코드 " + std::to_wstring(process.exitCode) + L"(으)로 끝났습니다.";
-    }
-
     Maro_ResultEnvelope result = Maro_BaseEnvelope(
-        work.requestId, work.request, Maro_Phase::Completed, finalStatus, std::move(statusText));
+        work.requestId, work.request, Maro_Phase::Completed, Maro_Status::Pending, {});
     result.executionId = work.requestId;
     result.generatedSource = generated.text;
     result.snippetWrapped = generated.wrapped;
@@ -677,20 +772,7 @@ void Maro_Engine::ProcessOne(const Maro_PendingWork& work, std::stop_token stopT
     result.hasExitCode = process.hasExitCode;
     result.maro_compileMilliseconds = maro_compileMs;
     result.maro_runMilliseconds = GetTickCount64() - maro_runStarted;
-    if (finalStatus == Maro_Status::TimedOut)
-        result.diagnostics.push_back(maro_MakeTimeoutDiagnostic(work.request));
-    if (finalStatus == Maro_Status::Success && process.standardOutputUtf8.empty())
-    {
-        result.diagnostics.push_back(Maro_MakeIdeFinding(
-            work.request, L"RUN-0000", Maro_Severity::Info, Maro_Evidence::RuntimeObservation,
-            L"실행은 정상적으로 끝났으며 stdout에서 관찰된 출력은 없습니다."));
-    }
-    else if (finalStatus == Maro_Status::RuntimeFailed)
-    {
-        result.diagnostics.push_back(Maro_MakeIdeFinding(
-            work.request, L"RUN-1002", Maro_Severity::Error, Maro_Evidence::RuntimeObservation,
-            L"프로그램이 0이 아닌 종료 코드 또는 운영체제 예외로 종료되었습니다."));
-    }
+    maro_CompleteExecution(work.request, process, result);
     Publish(work, std::move(result));
 }
 
@@ -776,17 +858,8 @@ void Maro_Engine::maro_ProcessProject(const Maro_PendingWork& maro_work,
     maro_publishOutput(true, {}, true);
     maro_stdout.maro_Trim();
     maro_stderr.maro_Trim();
-    if (maro_cancelled()) return;
-    maro_result.status = maro_run.hasExitCode && maro_run.exitCode == 0
-        ? Maro_Status::Success : Maro_Status::RuntimeFailed;
-    maro_result.statusText = maro_result.status == Maro_Status::Success ? L"정상 종료했습니다."
-        : L"프로그램 실행 실패: " + std::to_wstring(maro_run.hasExitCode ? maro_run.exitCode : maro_run.win32Error);
-    if (maro_run.termination == Maro_ProcessTermination::WallTimedOut)
-    {
-        maro_result.status = Maro_Status::TimedOut;
-        maro_result.statusText = L"출력 없이 30초 동안 계산이 계속되어 중지했습니다. 입력 대기는 제한하지 않습니다.";
-        maro_result.diagnostics.push_back(maro_MakeTimeoutDiagnostic(maro_work.request, true));
-    }
+    if (maro_run.termination == Maro_ProcessTermination::Cancelled || maro_cancelled()) return;
+    maro_CompleteExecution(maro_work.request, maro_run, maro_result, true);
     maro_result.executionId = maro_work.requestId;
     maro_result.hasExitCode = maro_run.hasExitCode;
     maro_result.exitCode = maro_run.exitCode;

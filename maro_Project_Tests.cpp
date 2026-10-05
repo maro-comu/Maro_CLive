@@ -114,6 +114,69 @@ void maro_TestProjects(const std::function<void(bool, std::string_view)>& maro_e
                 }
                 maro_liveEngine.Shutdown();
             }
+            const auto maro_completeProject = [&](std::string_view maro_text, bool maro_removeWork = false) {
+                maro_write(L"maro_main.c", maro_text);
+                std::mutex maro_runtimeMutex;
+                std::condition_variable maro_runtimeChanged;
+                std::optional<Maro_ResultEnvelope> maro_runtimeCompleted;
+                Maro_Engine maro_runtimeEngine([&](Maro_ResultEnvelope maro_update) {
+                    if (maro_removeWork && maro_update.phase == Maro_Phase::Running)
+                    {
+                        std::error_code maro_removeError;
+                        maro_fs::remove(maro_root / L"maro_start_work", maro_removeError);
+                    }
+                    if (maro_update.phase != Maro_Phase::Completed) return;
+                    std::lock_guard maro_lock(maro_runtimeMutex);
+                    maro_runtimeCompleted = std::move(maro_update);
+                    maro_runtimeChanged.notify_all();
+                });
+                Maro_SourceRequest maro_runtimeSource;
+                maro_runtimeSource.sourceVersion = 10;
+                maro_runtimeSource.sourcePath = (maro_root / L"maro_main.c").wstring();
+                maro_runtimeSource.sourceText = Maro_Utf8ToWide(maro_text);
+                maro_runtimeSource.maro_projectPath = maro_request.maro_projectPath;
+                maro_runtimeSource.maro_configuration = maro_request.maro_configuration;
+                maro_runtimeSource.maro_platform = maro_request.maro_platform;
+                maro_runtimeEngine.Submit(std::move(maro_runtimeSource));
+                {
+                    std::unique_lock maro_lock(maro_runtimeMutex);
+                    maro_runtimeChanged.wait_for(maro_lock, std::chrono::seconds(45), [&] { return maro_runtimeCompleted.has_value(); });
+                }
+                maro_runtimeEngine.Shutdown();
+                return maro_runtimeCompleted;
+            };
+            for (const auto maro_known : {false, true})
+            {
+                const auto maro_runtime = maro_completeProject(maro_known
+                    ? "#include <stdio.h>\n#include <windows.h>\nint main(void){puts(\"maro_project_exit\");fflush(stdout);ExitProcess(0xC0000005u);}\n"
+                    : "#include <stdio.h>\nint main(void){puts(\"maro_project_exit\");return 17;}\n");
+                maro_expect(maro_runtime && maro_runtime->status == Maro_Status::RuntimeFailed && maro_runtime->hasExitCode &&
+                    maro_runtime->exitCode == (maro_known ? 0xC0000005u : 17u) &&
+                    maro_runtime->standardOutput.find(L"maro_project_exit") != std::wstring::npos,
+                    "project runtime failure preserves the original exit code and prior stdout");
+                const auto maro_code = maro_known ? L"0xC0000005" : L"RUN-1002";
+                maro_expect(maro_runtime && std::any_of(maro_runtime->diagnostics.begin(), maro_runtime->diagnostics.end(),
+                    [&](const Maro_Diagnostic& maro_diagnostic) {
+                        return maro_diagnostic.code == maro_code && maro_diagnostic.evidence == Maro_Evidence::RuntimeObservation &&
+                            maro_diagnostic.friendlyMessage.find(maro_known ? L"포인터" : L"return") != std::wstring::npos &&
+                            maro_diagnostic.range.start.line == 0 && maro_diagnostic.range.start.column == 0 && !maro_diagnostic.fix;
+                    }), "project runtime errors reach the diagnostic pane with actionable advice and no guessed location");
+            }
+            std::ifstream maro_projectFile(maro_root / L"maro_test.vcxproj", std::ios::binary);
+            const std::string maro_projectText((std::istreambuf_iterator<char>(maro_projectFile)), {});
+            maro_projectFile.close();
+            auto maro_invalidWork = maro_projectText;
+            const auto maro_propertyEnd = maro_invalidWork.rfind("</Project>");
+            if (maro_propertyEnd != std::string::npos)
+                maro_invalidWork.insert(maro_propertyEnd, "<PropertyGroup><LocalDebuggerWorkingDirectory>$(ProjectDir)maro_start_work</LocalDebuggerWorkingDirectory></PropertyGroup>");
+            maro_fs::create_directory(maro_root / L"maro_start_work");
+            maro_write(L"maro_test.vcxproj", maro_invalidWork);
+            const auto maro_startFailure = maro_completeProject("int main(void){return 0;}\n", true);
+            maro_expect(maro_startFailure && maro_startFailure->status == Maro_Status::SandboxUnavailable &&
+                !maro_startFailure->hasExitCode && std::any_of(maro_startFailure->diagnostics.begin(), maro_startFailure->diagnostics.end(),
+                    [](const Maro_Diagnostic& maro_diagnostic) { return maro_diagnostic.code == L"RUN-START"; }),
+                "project startup failure remains distinct from a program's nonzero return value");
+            maro_write(L"maro_test.vcxproj", maro_projectText);
             maro_write(L"maro_value.h", "#error maro_header_failure\nint maro_value(void);\n");
             const auto maro_failed = maro_BuildProject(maro_request);
             maro_expect(!maro_failed.maro_success && maro_failed.maro_executablePath.empty() &&

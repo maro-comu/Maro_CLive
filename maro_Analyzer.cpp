@@ -845,8 +845,8 @@ std::vector<std::wstring> Maro_CompilerArguments(
     const Maro_SourceRequest& request,
     const fs::path& sourcePath,
     const fs::path& executablePath,
-    const fs::path& objectPath,
-    const fs::path& liveOutputHeader,
+    const fs::path& maro_objectDirectory,
+    const fs::path& maro_liveOutputSource,
     bool syntaxOnly)
 {
     std::vector<std::wstring> arguments;
@@ -880,12 +880,11 @@ std::vector<std::wstring> Maro_CompilerArguments(
         else
         {
             arguments.push_back(L"-O0");
-            arguments.push_back(L"-include");
-            arguments.push_back(liveOutputHeader.wstring());
         }
         arguments.push_back(sourcePath.wstring());
         if (!syntaxOnly)
         {
+            arguments.push_back(maro_liveOutputSource.wstring());
             arguments.push_back(L"-o");
             arguments.push_back(executablePath.wstring());
         }
@@ -921,11 +920,14 @@ std::vector<std::wstring> Maro_CompilerArguments(
         else
         {
             arguments.push_back(L"/Od");
-            arguments.push_back(L"/FI" + liveOutputHeader.wstring());
             arguments.push_back(L"/Fe:" + executablePath.wstring());
-            arguments.push_back(L"/Fo:" + objectPath.wstring());
+            std::wstring maro_objectPath = maro_objectDirectory.wstring();
+            if (!maro_objectPath.empty() && maro_objectPath.back() != L'\\' && maro_objectPath.back() != L'/')
+                maro_objectPath.push_back(L'\\');
+            arguments.push_back(L"/Fo:" + maro_objectPath);
         }
         arguments.push_back(sourcePath.wstring());
+        if (!syntaxOnly) arguments.push_back(maro_liveOutputSource.wstring());
     }
     return arguments;
 }
@@ -944,8 +946,8 @@ Maro_AnalysisResult Maro_RunCompiler(
     const fs::path sourcePath = workingDirectory /
         (request.language == Maro_Language::C17 ? L"maro_UserSource.c" : L"maro_UserSource.cpp");
     executablePath = workingDirectory / L"maro_UserProgram.exe";
-    const fs::path objectPath = workingDirectory / L"maro_UserProgram.obj";
-    const fs::path liveOutputHeader = workingDirectory / L"maro_LiveOutput.hpp";
+    const fs::path maro_liveOutputSource = workingDirectory /
+        (request.language == Maro_Language::C17 ? L"maro_LiveOutput.c" : L"maro_LiveOutput.cpp");
 
     const std::string utf8 = Maro_WideToUtf8(generated.text);
     if (utf8.size() > limits.sourceBytes)
@@ -976,7 +978,7 @@ Maro_AnalysisResult Maro_RunCompiler(
         return result;
     }
     if (!syntaxOnly && !Maro_WriteSourceFile(
-            liveOutputHeader,
+            maro_liveOutputSource,
             L"#include <stdio.h>\n"
             L"#ifdef __cplusplus\n"
             L"#include <iostream>\n"
@@ -999,8 +1001,8 @@ Maro_AnalysisResult Maro_RunCompiler(
         request,
         sourcePath,
         executablePath,
-        objectPath,
-        liveOutputHeader,
+        workingDirectory,
+        maro_liveOutputSource,
         syntaxOnly);
     processRequest.workingDirectory = workingDirectory.wstring();
     processRequest.environmentOverrides = toolchain.environment;
